@@ -26,6 +26,7 @@ const ORCAMENTO_TRANSITIONS: Record<PedidoStatus, PedidoStatus[]> = {
   'cancelado': [], // Estado final
   'producao': [], // Não aplicável a orçamentos
   'finalizado': [], // Não aplicável a orçamentos
+  'aguardando_despacho': [], // Não aplicável a orçamentos
   'entregue': [], // Não aplicável a orçamentos
 };
 

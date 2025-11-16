@@ -316,7 +316,10 @@ export default function ClientesPage() {
     };
 
     // Preparar contatos para salvar (sem o campo 'id' que é usado apenas no frontend)
-    const contatosParaSalvar = contatos.map(({ id, ...contato }) => contato);
+    const contatosParaSalvar = contatos.map(({ id, ...contato }) => ({
+      ...contato,
+      ativo: true
+    }));
 
     if (editingItem) {
       const { error: err } = await update(editingItem.id, clienteData, contatosParaSalvar);

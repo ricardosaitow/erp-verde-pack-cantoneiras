@@ -147,7 +147,7 @@ export interface Pedido {
   cliente_id: string;
   data_pedido: string;
   tipo: 'orcamento' | 'pedido_confirmado';
-  status: 'pendente' | 'aprovado' | 'producao' | 'finalizado' | 'entregue' | 'cancelado' | 'recusado';
+  status: 'pendente' | 'aprovado' | 'producao' | 'finalizado' | 'aguardando_despacho' | 'entregue' | 'cancelado' | 'recusado';
   
   valor_produtos: number;
   valor_frete: number;
@@ -231,6 +231,11 @@ export interface ProdutoComCusto extends Produto {
 export interface PedidoCompleto extends Pedido {
   cliente?: Cliente;
   itens?: (PedidoItem & { produto?: Produto })[];
+}
+
+export interface OrdemProducaoCompleta extends OrdemProducao {
+  pedido?: Pedido;
+  produto?: ProdutoComCusto;
 }
 
 export interface AlertaEstoque {

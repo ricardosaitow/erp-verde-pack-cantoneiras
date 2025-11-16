@@ -43,9 +43,9 @@ export async function gerarPDFPedido(pedido: PedidoCompleto): Promise<void> {
     yPosition += 6;
   }
 
-  if (pedido.data_entrega) {
-    const dataEntrega = new Date(pedido.data_entrega).toLocaleDateString('pt-BR');
-    pdf.text(`Data de Entrega: ${dataEntrega}`, margin, yPosition);
+  if (pedido.data_entrega_prevista) {
+    const dataEntrega = new Date(pedido.data_entrega_prevista).toLocaleDateString('pt-BR');
+    pdf.text(`Data de Entrega Prevista: ${dataEntrega}`, margin, yPosition);
     yPosition += 6;
   }
 

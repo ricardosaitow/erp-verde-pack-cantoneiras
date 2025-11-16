@@ -110,7 +110,7 @@ export default function PedidosPage() {
     }
 
     const dadosAtualizacao = {
-      status: newStatus,
+      status: newStatus as PedidoStatus,
       tipo: tipoAtualizado,
     };
 

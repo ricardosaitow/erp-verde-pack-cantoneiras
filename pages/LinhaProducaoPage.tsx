@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { confirmAction } from '@/lib/toast-utils';
 import { useOrdensProducao } from '../hooks/useOrdensProducao';
 import { usePedidos } from '../hooks/usePedidos';
-import type { OrdemProducao } from '../lib/database.types';
+import type { OrdemProducaoCompleta } from '../lib/database.types';
 import { formatQuantity } from '../lib/format';
 import { PageHeader, LoadingSpinner, EmptyState, StatusBadge } from '@/components/erp';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,7 @@ import { OrdemProducaoDetailModal } from '@/components/ordens-producao/OrdemProd
 export default function LinhaProducaoPage() {
   const { ordens, loading, error, update, refresh, delete: deleteOrdem } = useOrdensProducao();
   const { pedidos, update: updatePedido } = usePedidos();
-  const [selectedOrdem, setSelectedOrdem] = useState<OrdemProducao | null>(null);
+  const [selectedOrdem, setSelectedOrdem] = useState<OrdemProducaoCompleta | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
   // Filtrar apenas ordens relevantes para produção (aguardando e em_producao)
@@ -43,7 +43,7 @@ export default function LinhaProducaoPage() {
   };
 
   // Abrir modal de detalhes
-  const handleOpenDetail = (ordem: OrdemProducao) => {
+  const handleOpenDetail = (ordem: OrdemProducaoCompleta) => {
     setSelectedOrdem(ordem);
     setShowDetailModal(true);
   };
@@ -69,7 +69,7 @@ export default function LinhaProducaoPage() {
   };
 
   // Atualizar status da ordem
-  const handleUpdateStatus = async (ordem: OrdemProducao, newStatus: string) => {
+  const handleUpdateStatus = async (ordem: OrdemProducaoCompleta, newStatus: string) => {
     const validation = isTransitionAllowed(
       ordem.status as OrdemProducaoStatus,
       newStatus as OrdemProducaoStatus
@@ -80,7 +80,7 @@ export default function LinhaProducaoPage() {
       return;
     }
 
-    const { error: err } = await update(ordem.id, { status: newStatus });
+    const { error: err } = await update(ordem.id, { status: newStatus as OrdemProducaoStatus });
 
     if (err) {
       toast.error('Erro ao atualizar status: ' + err);
@@ -92,7 +92,7 @@ export default function LinhaProducaoPage() {
   };
 
   // Iniciar produção
-  const handleIniciarProducao = async (ordem: OrdemProducao) => {
+  const handleIniciarProducao = async (ordem: OrdemProducaoCompleta) => {
     const validation = isTransitionAllowed(
       ordem.status as OrdemProducaoStatus,
       'em_producao' as OrdemProducaoStatus
@@ -114,7 +114,7 @@ export default function LinhaProducaoPage() {
   };
 
   // Concluir produção
-  const handleConcluirProducao = async (ordem: OrdemProducao) => {
+  const handleConcluirProducao = async (ordem: OrdemProducaoCompleta) => {
     const validation = isTransitionAllowed(
       ordem.status as OrdemProducaoStatus,
       'concluido' as OrdemProducaoStatus
@@ -398,10 +398,10 @@ export default function LinhaProducaoPage() {
                               <p className="font-medium">{formatDate(ordem.data_programada)}</p>
                             </div>
                           )}
-                          {ordem.data_inicio && (
+                          {ordem.data_inicio_producao && (
                             <div>
                               <p className="text-muted-foreground">Iniciada em</p>
-                              <p className="font-medium">{formatDate(ordem.data_inicio)}</p>
+                              <p className="font-medium">{formatDate(ordem.data_inicio_producao)}</p>
                             </div>
                           )}
                         </div>

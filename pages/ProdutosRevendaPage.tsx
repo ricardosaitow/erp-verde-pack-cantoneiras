@@ -22,7 +22,7 @@ import {
 import { toast } from 'sonner';
 
 export default function ProdutosRevendaPage() {
-  const { produtos, loading, error, refresh, deleteProduto } = useProdutos();
+  const { produtos, loading, error, refresh, delete: deleteProduto } = useProdutos();
   const { categorias } = useCategorias();
 
   // Filter state

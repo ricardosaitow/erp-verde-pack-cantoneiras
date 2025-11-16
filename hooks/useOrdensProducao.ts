@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import type { OrdemProducao } from '../lib/database.types';
+import type { OrdemProducao, OrdemProducaoCompleta } from '../lib/database.types';
 import { darBaixaMateriasPrimasProducao } from '../lib/estoque';
 
 export function useOrdensProducao() {
-  const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
+  const [ordens, setOrdens] = useState<OrdemProducaoCompleta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +78,7 @@ export function useOrdensProducao() {
       
       const { data, error } = await supabase
         .from('ordens_producao')
-        .insert([{ ...ordem, numero_op }])
+        .insert([{ ...ordem, numero_op: numeroOp }])
         .select()
         .single();
 

@@ -134,8 +134,6 @@ export default function FornecedoresPage() {
         ...formData,
         razao_social: dados.razao_social || formData.razao_social,
         nome_fantasia: dados.nome_fantasia || formData.nome_fantasia,
-        email: dados.email || formData.email,
-        telefone: dados.telefone || formData.telefone,
         endereco_completo: dados.logradouro
           ? `${dados.logradouro}${dados.numero ? ', ' + dados.numero : ''}${dados.complemento ? ', ' + dados.complemento : ''} - ${dados.bairro}`
           : formData.endereco_completo,

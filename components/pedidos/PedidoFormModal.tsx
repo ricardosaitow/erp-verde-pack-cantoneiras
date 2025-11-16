@@ -86,7 +86,7 @@ export default function PedidoFormModal({
   const [formData, setFormData] = useState({
     cliente_id: '',
     tipo: 'orcamento' as 'orcamento' | 'pedido_confirmado',
-    status: 'pendente' as 'pendente' | 'aprovado' | 'producao' | 'finalizado' | 'entregue' | 'cancelado' | 'recusado',
+    status: 'pendente' as 'pendente' | 'aprovado' | 'producao' | 'finalizado' | 'aguardando_despacho' | 'entregue' | 'cancelado' | 'recusado',
     data_pedido: new Date().toISOString().split('T')[0],
     valor_produtos: 0,
     valor_frete: 0,

@@ -143,7 +143,7 @@ export function CompraDetailModal({ compra, open, onClose, onUpdate }: CompraDet
             <div>
               <Label>Alterar Status</Label>
               <div className="flex gap-2">
-                <Select value={status} onValueChange={setStatus}>
+                <Select value={status} onValueChange={(value) => setStatus(value as typeof status)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

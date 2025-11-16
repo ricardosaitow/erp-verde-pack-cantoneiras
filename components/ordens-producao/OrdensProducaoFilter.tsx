@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Filter, X, Search } from 'lucide-react';
-import type { OrdemProducao } from '../../lib/database.types';
+import type { OrdemProducaoCompleta } from '../../lib/database.types';
 
 export interface FilterState {
   search: string;
@@ -22,7 +22,7 @@ export interface FilterState {
 interface OrdensProducaoFilterProps {
   filters: FilterState;
   onFiltersChange: (filters: FilterState) => void;
-  ordens: OrdemProducao[];
+  ordens: OrdemProducaoCompleta[];
 }
 
 export function OrdensProducaoFilter({ filters, onFiltersChange, ordens }: OrdensProducaoFilterProps) {
@@ -120,14 +120,14 @@ export function OrdensProducaoFilter({ filters, onFiltersChange, ordens }: Orden
   );
 }
 
-export function applyFilters(ordens: OrdemProducao[], filters: FilterState): OrdemProducao[] {
+export function applyFilters(ordens: OrdemProducaoCompleta[], filters: FilterState): OrdemProducaoCompleta[] {
   return ordens.filter((ordem) => {
     // Search filter
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
       const numeroOp = (ordem.numero_op || '').toLowerCase();
       const produtoNome = (ordem.produto?.nome || '').toLowerCase();
-      const responsavel = (ordem.responsavel || '').toLowerCase();
+      const responsavel = (ordem.responsavel_producao || '').toLowerCase();
 
       if (
         !numeroOp.includes(searchLower) &&
