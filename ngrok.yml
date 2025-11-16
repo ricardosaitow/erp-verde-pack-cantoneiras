@@ -1,0 +1,7 @@
+version: '2'
+authtoken: YOUR_AUTH_TOKEN
+tunnels:
+  erp:
+    proto: http
+    addr: 3000
+    host_header: localhost:3000

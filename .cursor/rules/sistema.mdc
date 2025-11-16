@@ -1,0 +1,478 @@
+---
+alwaysApply: true
+---
+ESTRUTURA COMPLETA DO SISTEMA ERP
+1. BANCO DE DADOS
+Tabela: categorias
+
+
+sql
+id
+nome (Cantoneiras, Embalagens, Adesivos, etc.)tipo (fabricado/revenda)ativo
+created_at, updated_at
+Tabela: fornecedores
+
+
+sql
+id
+razao_social
+nome_fantasia
+cnpj
+email, telefone
+endereco_completo
+condicoes_pagamento
+prazo_entrega_dias
+observacoes
+ativo
+created_at, updated_at
+Tabela: materias_primas
+
+
+sql
+id
+nome (Bobina Kraft 400g - Largura 70mm)tipo (papel_kraft, cola_pva, tinta, etc.)gramatura (g/m²) -- só para papellargura_mm -- só para papel/bobinaspeso_por_metro_g -- calculado: (gramatura × largura_mm / 1000)unidade_estoque (kg, litro, unidade)estoque_atual
+estoque_minimo
+estoque_ponto_reposicao
+custo_por_unidade (R$/kg, R$/litro)fornecedor_id
+local_armazenamento
+ativo
+created_at, updated_at
+Tabela: produtos
+
+
+sql
+id
+nome (Cantoneira 50x50x3mm)codigo_interno (opcional)descricao
+categoria_id
+tipo (fabricado/revenda)-- Medidas (em mm para produtos fabricados)altura_mm
+largura_mm
+espessura_mm
+-- Vendaunidade_venda (metro, kg, unidade, rolo, etc.)permite_medida_composta (boolean) -- true = vende qtd + comprimentopreco_venda_unitario
+margem_lucro_percentual
+-- Apenas para REVENDAestoque_atual
+estoque_minimo
+estoque_ponto_reposicao
+custo_compra
+fornecedor_id
+codigo_fornecedor
+lote_minimo_compra
+prazo_entrega_dias
+local_armazenamento
+-- Apenas para FABRICADOtempo_producao_metros_hora (ou unidades/hora)lead_time_dias
+instrucoes_tecnicas (texto)ativo
+created_at, updated_at
+Tabela: receitas (composição dos produtos fabricados)
+
+
+sql
+id
+produto_id
+materia_prima_id
+numero_camadas -- quantas camadas/folhas dessa matériaconsumo_por_metro_g -- peso em gramas por metro linearcusto_por_metro -- calculado automaticamenteobservacoes
+created_at, updated_at
+Tabela: clientes
+
+
+sql
+id
+tipo_pessoa (fisica/juridica)razao_social / nome
+nome_fantasia
+cnpj_cpf
+email, telefone, celular
+endereco_completo
+cep, cidade, estado
+contato_principal
+condicoes_pagamento
+limite_credito
+observacoes
+ativo
+created_at, updated_at
+Tabela: pedidos
+
+
+sql
+id
+numero_pedido (gerado automaticamente)cliente_id
+data_pedido
+tipo (orcamento/pedido_confirmado)status (orcamento, aprovado, producao, finalizado, entregue, cancelado)valor_produtos
+valor_frete
+valor_desconto
+valor_total
+prazo_entrega_dias
+data_entrega_prevista
+data_entrega_realizada
+forma_pagamento
+condicoes_pagamento
+observacoes
+observacoes_internas
+vendedor (usuário que criou)created_at, updated_at
+Tabela: pedidos_itens
+
+
+sql
+id
+pedido_id
+produto_id
+tipo_produto (fabricado/revenda)-- Para venda composta (cantoneiras)quantidade_pecas
+comprimento_cada_mm -- comprimento de cada peça em mmtotal_metros -- calculado: (quantidade_pecas × comprimento_cada_mm / 1000)-- Para venda simples (revenda)quantidade_simples
+-- Valoresunidade_medida (metro, kg, unidade, rolo)preco_unitario
+subtotal
+-- Observações específicas do itemobservacoes
+created_at, updated_at
+Tabela: ordens_producao
+
+
+sql
+id
+numero_op (gerado automaticamente)pedido_id
+pedido_item_id
+produto_id
+quantidade_produzir_metros (ou unidades)data_programada
+data_inicio_producao
+data_conclusao
+status (aguardando, em_producao, concluido, cancelado)instrucoes_tecnicas
+observacoes
+responsavel_producao
+created_at, updated_at
+Tabela: ordens_producao_consumo (controle do que foi consumido)
+
+
+sql
+id
+ordem_producao_id
+materia_prima_id
+quantidade_prevista_kg
+quantidade_consumida_kg -- preenchido após produçãodiferenca_kg -- para análise de desperdícioobservacoes
+created_at, updated_at
+Tabela: movimentacoes_estoque
+
+
+sql
+id
+tipo (entrada/saida/ajuste/producao)tipo_item (materia_prima/produto_revenda)item_id (materia_prima_id ou produto_id)quantidade_anterior
+quantidade_movimentada
+quantidade_atual
+unidade
+motivo (compra, venda, producao, ajuste_inventario, devolucao)documento_referencia (pedido_id, ordem_producao_id, nota_fiscal)observacoes
+usuario_id
+created_at
+```---
+## 2. ESTRUTURA DE MENUS (FRONTEND)
+```🏠 DASHBOARD
+   - Resumo de vendas
+   - Pedidos em aberto
+   - Ordens de produção
+   - Alertas de estoque baixo
+📋 VENDAS
+   ├─ 💼 Clientes
+   ├─ 📝 Orçamentos
+   ├─ 🛒 Pedidos
+   └─ 📊 Relatórios de Vendas
+🏭 PRODUÇÃO
+   ├─ 📋 Ordens de Produção
+   ├─ 📅 Programação
+   ├─ ✅ Controle de Qualidade
+   └─ 📊 Relatórios de Produção
+📦 ESTOQUE
+   ├─ 📦 Produtos (revenda)   ├─ 🧱 Matérias-Primas
+   ├─ 📊 Movimentações
+   ├─ 📋 Inventário
+   └─ ⚠️ Alertas
+⚙️ CADASTROS
+   ├─ 📦 Produtos
+   │  ├─ Listar Todos
+   │  ├─ Produtos Fabricados
+   │  └─ Produtos de Revenda
+   ├─ 🧱 Matérias-Primas
+   ├─ 👥 Fornecedores
+   ├─ 💼 Clientes
+   └─ 🏷️ Categorias
+💰 FINANCEIRO
+   ├─ 💵 Contas a Receber
+   ├─ 💸 Contas a Pagar
+   ├─ 📊 Fluxo de Caixa
+   └─ 📈 Análise de Lucratividade
+📊 RELATÓRIOS
+   ├─ 📈 Vendas por Período
+   ├─ 🏭 Produtividade
+   ├─ 📦 Giro de Estoque
+   ├─ 💰 Margem por Produto
+   └─ 📉 Análise de Custos
+👤 CONFIGURAÇÕES
+   ├─ 👥 Usuários
+   ├─ 🔐 Permissões
+   └─ ⚙️ Parâmetros do Sistema
+```---
+## 3. FLUXOS PRINCIPAIS
+### FLUXO 1: Cadastrar Matéria-Prima (Bobina)
+```1. Menu: Cadastros → Matérias-Primas → [+ Nova]2. Formulário:
+   Nome: [Bobina Kraft 400g - Largura 70mm]   Tipo: [Papel Kraft ▼]   Gramatura: [400] g/m²
+   Largura: [70] mm
+   💡 Peso por metro: 28g (auto-calculado: 400 × 70 / 1000)   Estoque Atual: [150] kg
+   Estoque Mínimo: [50] kg
+   Ponto de Reposição: [80] kg
+   Custo: R$ [12,00] /kg
+   Fornecedor: [Papelaria XYZ ▼]   Local: [Depósito A - Prateleira 2]   [Cancelar] [Salvar]3. Sistema salva e calcula automaticamente peso_por_metro_g
+```### FLUXO 2: Cadastrar Produto Fabricado (Cantoneira)
+```1. Menu: Cadastros → Produtos → [+ Novo Produto]2. ABA: Informações Básicas
+   Nome: [Cantoneira 50x50x3mm]   Código: [CANT-50-50-3] (opcional)   Categoria: [Cantoneiras ▼]   Tipo: ● Fabricado  ○ Revenda
+   Dimensões:
+   Altura: [50] mm
+   Largura: [50] mm
+   Espessura: [3] mm
+   Unidade de Venda: [Metro ▼]   ☑ Permite venda por unidade composta
+   Status: ☑ Ativo
+3. ABA: Precificação
+   Preço de Venda: R$ [8,00] por metro
+   Margem Desejada: [200] %   💡 Custo será calculado após definir composição
+4. ABA: Composição/Receita
+   [+ Adicionar Matéria-Prima]   ┌────────────────────────────────────────────────┐
+   │ Matéria-Prima: [Bobina 400g - 70mm ▼]         │
+   │ Nº de Camadas: [4]                            │
+   │                                               │
+   │ Dados da Bobina:                              │
+   │ • Peso por metro: 28g                         │
+   │ • Custo: R$ 12,00/kg                          │
+   │                                               │
+   │ Consumo Calculado:                            │
+   │ • 4 camadas × 28g = 112g por metro           │
+   │ • Custo: R$ 1,34 por metro                    │
+   │                                               │
+   │         [Cancelar] [Adicionar]                │
+   └────────────────────────────────────────────────┘
+   Lista de Matérias-Primas:
+   ┌─────────────────────────────────────────────────┐
+   │ Bobina 400g-70mm  │ 4 cam │ 112g/m │ R$ 1,34/m │
+   │ Bobina 130g-160mm │ 1 cam │ 20,8g/m│ R$ 0,21/m │
+   │ Cola PVA          │   -   │ 15g/m  │ R$ 0,45/m │
+   └─────────────────────────────────────────────────┘
+   Peso Total: 147,8g por metro
+   Custo Total: R$ 2,00 por metro
+   Preço Venda: R$ 8,00 por metro
+   Margem Real: 300% (R$ 6,00)5. ABA: Produção
+   Tempo Médio: [30] metros/hora
+   Lead Time: [2] dias úteis
+   Instruções Técnicas:
+   [Campo de texto para observações de produção]6. [Salvar Produto]```### FLUXO 3: Cadastrar Produto de Revenda
+```1. Menu: Cadastros → Produtos → [+ Novo Produto]2. ABA: Informações Básicas
+   Nome: [Fita Adesiva 48mm Transparente]   Código: [FTA-48-TRANS]   Categoria: [Adesivos ▼]   Tipo: ○ Fabricado  ● Revenda
+   Unidade de Venda: [Rolo ▼]   ☐ Permite venda por unidade composta
+   Status: ☑ Ativo
+3. ABA: Estoque
+   Estoque Atual: [150] rolos
+   Estoque Mínimo: [30] rolos
+   Ponto de Reposição: [50] rolos
+   Local: [Depósito B - Prateleira 5]4. ABA: Fornecimento
+   Fornecedor: [Distribuidora ABC ▼]   Código Fornecedor: [FT48-100]   Custo de Compra: R$ [12,00] por rolo
+   Preço de Venda: R$ [15,00] por rolo
+   Margem: 25% (R$ 3,00)   Lead Time: [7] dias úteis
+   Lote Mínimo: [50] rolos
+5. [Salvar Produto]```### FLUXO 4: Criar Pedido de Venda
+```1. Menu: Vendas → Pedidos → [+ Novo Pedido]2. Cabeçalho:
+   Cliente: [Distribuidora XYZ ▼]   Tipo: ● Pedido  ○ Orçamento
+   Data: [14/11/2025]   Vendedor: [João Silva - logado]3. [+ Adicionar Item]   ITEM 1 - PRODUTO FABRICADO:
+   ┌──────────────────────────────────────────────┐
+   │ Produto: [Cantoneira 50x50x3mm ▼] 🏭        │
+   │                                             │
+   │ ⚙️ Venda por unidade composta               │
+   │                                             │
+   │ Quantidade de peças: [10]                   │
+   │ Comprimento de cada: [2500] mm (2,5 metros)│
+   │                                             │
+   │ ═══════════════════════════════════════════ │
+   │ Total: 25.000 mm = 25 metros lineares      │
+   │ Preço: R$ 8,00/metro                       │
+   │ Subtotal: R$ 200,00                        │
+   │ ═══════════════════════════════════════════ │
+   │                                             │
+   │ 📦 Matéria-prima necessária:                │
+   │ • Bobina 400g-70mm: 2,8kg ✓                │
+   │ • Bobina 130g-160mm: 0,52kg ✓              │
+   │ • Cola PVA: 375g ✓                         │
+   │                                             │
+   │ ✅ Material disponível                      │
+   │ 🏭 Gera Ordem de Produção                   │
+   └──────────────────────────────────────────────┘
+   ITEM 2 - PRODUTO REVENDA:
+   ┌──────────────────────────────────────────────┐
+   │ Produto: [Fita Adesiva 48mm ▼] 📦          │
+   │                                             │
+   │ Quantidade: [10] rolos                      │
+   │                                             │
+   │ ═══════════════════════════════════════════ │
+   │ Preço: R$ 15,00/rolo                       │
+   │ Subtotal: R$ 150,00                        │
+   │ ═══════════════════════════════════════════ │
+   │                                             │
+   │ 📦 Estoque: 150 rolos ✓                     │
+   │ 📤 Dá baixa no estoque                      │
+   └──────────────────────────────────────────────┘
+4. Totais:
+   Valor Produtos: R$ 350,00   Frete: R$ [50,00]   Desconto: R$ [0,00]   ─────────────────────────
+   TOTAL: R$ 400,005. Condições:
+   Forma Pagamento: [Boleto ▼]   Condições: [30 dias ▼]   Prazo Entrega: [3] dias úteis
+   Data Prevista: 17/11/20256. Observações:
+   [Campo livre]7. [Salvar Rascunho] [Gerar Orçamento] [Confirmar Pedido]8. Ao confirmar:
+   - Item fabricado → Cria Ordem de Produção
+   - Item revenda → Reserva estoque (ou baixa imediatamente)   - Status: "Aprovado"```### FLUXO 5: Ordem de Produção
+```1. Gerada automaticamente ao confirmar pedido
+2. Menu: Produção → Ordens de Produção
+3. Visualização da OP:
+   ═══════════════════════════════════════════════
+   ORDEM DE PRODUÇÃO #OP-0123   ═══════════════════════════════════════════════
+   Pedido: #0045   Cliente: Distribuidora XYZ
+   Data de Entrega: 17/11/2025   Status: ⏳ Aguardando Produção
+   ───────────────────────────────────────────────
+   PRODUZIR:
+   Produto: Cantoneira 50x50x3mm
+   Quantidade: 10 peças × 2.500mm = 25 metros
+   ───────────────────────────────────────────────
+   MATÉRIA-PRIMA A SEPARAR:
+   ☐ Bobina 400g - 70mm: 2,800 kg
+      Estoque: 150kg → Após: 147,2kg
+   ☐ Bobina 130g - 160mm: 0,520 kg
+      Estoque: 80kg → Após: 79,48kg
+   ☐ Cola PVA: 0,375 kg
+      Estoque: 5kg → Após: 4,625kg
+   ───────────────────────────────────────────────
+   INSTRUÇÕES TÉCNICAS:
+   [Instruções cadastradas no produto]   ───────────────────────────────────────────────
+   [Iniciar Produção] [Cancelar OP]4. Ao clicar [Iniciar Produção]:
+   - Status: "Em Produção"   - Registra data/hora início
+   - Reserva matéria-prima
+5. Durante produção:
+   [Registrar Consumo Real]   Bobina 400g-70mm:
+   Previsto: 2,800 kg
+   Consumido: [2,850] kg ⚠️ +50g desperdício
+   [Finalizar Produção]6. Ao finalizar:
+   - Dá baixa real no estoque de matéria-prima
+   - Status OP: "Concluído"   - Status Pedido: "Finalizado"   - Registra movimentações no estoque
+   - Produto pronto para entrega
+4. CÁLCULOS AUTOMÁTICOS (LÓGICA)
+Cadastro de Bobina
+
+
+javascript
+peso_por_metro_g = (gramatura × largura_mm) / 1000Exemplo:gramatura = 400 g/m²
+largura_mm = 70 mm
+peso_por_metro_g = (400 × 70) / 1000 = 28g
+Composição do Produto
+
+
+javascript
+consumo_por_metro_g = numero_camadas × peso_por_metro_bobina_g
+Exemplo:numero_camadas = 4peso_por_metro_bobina = 28g
+consumo_por_metro_g = 4 × 28 = 112g
+custo_por_metro = (consumo_por_metro_g / 1000) × custo_por_kg
+Exemplo:consumo = 112g = 0,112kg
+custo_por_kg = R$ 12,00custo_por_metro = 0,112 × 12 = R$ 1,34
+Venda Composta
+
+
+javascript
+// Conversão mm → metrostotal_metros = (quantidade_pecas × comprimento_cada_mm) / 1000Exemplo:quantidade_pecas = 10comprimento_cada_mm = 2500total_metros = (10 × 2500) / 1000 = 25 metros
+// Cálculo de consumoconsumo_material_kg = (total_metros × consumo_por_metro_g) / 1000Exemplo:total_metros = 25consumo_por_metro_g = 112g (bobina 400g)consumo_material_kg = (25 × 112) / 1000 = 2,8 kg
+Verificação de Estoque
+
+
+javascript
+// Para produto fabricadomaterias_disponiveis = truefor each materia in receita:   consumo_necessario = total_metros × materia.consumo_por_metro_g / 1000   if (materia.estoque_atual < consumo_necessario):      materias_disponiveis = false      break// Para produto revendaproduto_disponivel = (produto.estoque_atual >= quantidade_pedida)
+5. VALIDAÇÕES IMPORTANTES
+
+
+javascript
+// Ao confirmar pedidoif (item.tipo_produto == 'fabricado'):   - Verificar estoque de TODAS matérias-primas
+   - Calcular prazo de produção
+   - Gerar Ordem de Produçãoif (item.tipo_produto == 'revenda'):   - Verificar estoque do produto
+   - Se insuficiente: alertar ou bloquear
+   - Reservar/baixar estoque
+// Alertas de estoque baixoif (materia_prima.estoque_atual <= estoque_minimo):   - Gerar alerta no dashboard
+   - Sugerir compra
+if (materia_prima.estoque_atual <= ponto_reposicao):   - Alerta urgente
+   - Bloquear novos pedidos que usem esse material
+```---
+## 6. TELAS PRINCIPAIS (WIREFRAME CONCEITUAL)
+### Tela: Lista de Produtos
+```┌────────────────────────────────────────────────────────┐
+│ 📦 PRODUTOS                          [+ Novo Produto]  │
+├────────────────────────────────────────────────────────┤
+│ Filtros: [Todos ▼] [Categoria ▼] [🔍 Buscar...]      │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│ 🏭 Cantoneira 50x50x3mm                       [✏️] [🗑️]│
+│    Fabricado • 50×50×3mm • R$ 8,00/m                  │
+│    Composição: 3 matérias-primas                      │
+│                                                        │
+│ 🏭 Cantoneira 100x100x5mm                     [✏️] [🗑️]│
+│    Fabricado • 100×100×5mm • R$ 15,00/m               │
+│    Composição: 3 matérias-primas                      │
+│                                                        │
+│ 📦 Fita Adesiva 48mm                          [✏️] [🗑️]│
+│    Revenda • Rolo • R$ 15,00/un                       │
+│    Estoque: 150 rolos ✓                               │
+│                                                        │
+│ 📦 Stretch Film 50cm                          [✏️] [🗑️]│
+│    Revenda • Rolo • R$ 45,00/un                       │
+│    Estoque: 25 rolos ⚠️ Abaixo do mínimo              │
+│                                                        │
+└────────────────────────────────────────────────────────┘
+```### Tela: Novo Pedido (resumida)
+```┌────────────────────────────────────────────────────────┐
+│ 📝 NOVO PEDIDO                                         │
+├────────────────────────────────────────────────────────┤
+│ Cliente: [Distribuidora XYZ ▼]    Data: 14/11/2025   │
+│ Tipo: ● Pedido  ○ Orçamento                          │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│ ITENS DO PEDIDO                   [+ Adicionar Item]  │
+│                                                        │
+│ ┌──────────────────────────────────────────────┐     │
+│ │ 1. Cantoneira 50x50x3mm             🏭  [✏️][❌]│     │
+│ │    10 peças × 2.500mm = 25m                 │     │
+│ │    R$ 8,00/m = R$ 200,00                    │     │
+│ │    ✅ Material disponível                    │     │
+│ └──────────────────────────────────────────────┘     │
+│                                                        │
+│ ┌──────────────────────────────────────────────┐     │
+│ │ 2. Fita Adesiva 48mm                📦  [✏️][❌]│     │
+│ │    10 rolos                                 │     │
+│ │    R$ 15,00/un = R$ 150,00                  │     │
+│ │    ✅ Estoque disponível                     │     │
+│ └──────────────────────────────────────────────┘     │
+│                                                        │
+├────────────────────────────────────────────────────────┤
+│ Valor Produtos: R$ 350,00                             │
+│ Frete: R$ [50,00]                                     │
+│ Desconto: R$ [0,00]                                   │
+│ ─────────────────────────────────────────────────     │
+│ TOTAL: R$ 400,00                                      │
+├────────────────────────────────────────────────────────┤
+│ Prazo: [3] dias • Entrega: 17/11/2025                │
+│ Pagamento: [Boleto 30 dias ▼]                        │
+├────────────────────────────────────────────────────────┤
+│ [Salvar Rascunho] [Gerar Orçamento] [Confirmar]      │
+└────────────────────────────────────────────────────────┘
+7. TECNOLOGIAS SUGERIDAS
+Frontend:
+React + TypeScript
+Tailwind CSS
+React Hook Form
+React Query / TanStack Query
+Zustand (estado global)
+Backend:
+Node.js + Express ou
+Python + FastAPI
+PostgreSQL (banco de dados)
+Prisma ORM (se Node) ou SQLAlchemy (se Python)
+Integrações:
+APIs brasileiras: ReceitaWS (CNPJ), ViaCEP
+Sistema de nota fiscal (NFe)
+8. PRÓXIMOS PASSOS
+Definir stack tecnológica (React + Node ou Python?)
+Criar estrutura do banco (SQL completo)
+Desenvolver cadastros básicos (fornecedores, matérias-primas)
+Implementar cadastro de produtos (com composição)
+Desenvolver módulo de vendas/pedidos
+Implementar ordens de produção
+Controle de estoque automatizado
+Dashboard e relatórios
