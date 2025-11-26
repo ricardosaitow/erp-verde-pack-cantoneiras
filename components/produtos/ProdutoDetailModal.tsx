@@ -12,6 +12,8 @@ import { Separator } from '@/components/ui/separator';
 import type { ProdutoComCusto } from '@/lib/database.types';
 import { formatCurrency, formatQuantity } from '@/lib/format';
 import { formatBrazilianDateTimeLong } from '@/lib/date-utils';
+import { formatarNCM } from '@/lib/produto-sync';
+import { Cloud, CheckCircle2, XCircle } from 'lucide-react';
 
 interface ProdutoDetailModalProps {
   produto: ProdutoComCusto | null;
@@ -19,6 +21,7 @@ interface ProdutoDetailModalProps {
   onClose: () => void;
   onEdit: (produto: ProdutoComCusto) => void;
   onDelete: (id: string) => void;
+  onSync?: (id: string) => Promise<{ error: string | null }>;
   categoriaNome?: string;
 }
 
@@ -28,6 +31,7 @@ export function ProdutoDetailModal({
   onClose,
   onEdit,
   onDelete,
+  onSync,
   categoriaNome,
 }: ProdutoDetailModalProps) {
   if (!produto) return null;
@@ -39,6 +43,12 @@ export function ProdutoDetailModal({
 
   const handleDelete = () => {
     onDelete(produto.id);
+  };
+
+  const handleSync = async () => {
+    if (onSync) {
+      await onSync(produto.id);
+    }
   };
 
   const getEstoqueStatus = () => {
@@ -103,6 +113,12 @@ export function ProdutoDetailModal({
                     <div>
                       <p className="text-sm text-muted-foreground">Código Interno</p>
                       <p className="font-medium">{produto.codigo_interno}</p>
+                    </div>
+                  )}
+                  {produto.ncm && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">NCM</p>
+                      <p className="font-medium">{formatarNCM(produto.ncm)}</p>
                     </div>
                   )}
                   <div>
@@ -228,8 +244,34 @@ export function ProdutoDetailModal({
               </Card>
             )}
 
+            {/* Composição do Produto */}
+            {produto.tipo === 'fabricado' && produto.receitas && produto.receitas.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Composição do Produto</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {produto.receitas.map((receita: any) => (
+                      <div key={receita.id} className="flex justify-between items-center p-3 bg-muted/30 rounded-md">
+                        <div>
+                          <p className="font-medium">{receita.materia_prima?.nome || 'Matéria-prima'}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {receita.numero_camadas} {receita.numero_camadas === 1 ? 'camada' : 'camadas'}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-muted-foreground">{receita.consumo_por_metro_g}g/m</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Informações de Fabricação */}
-            {produto.tipo === 'fabricado' && (
+            {produto.tipo === 'fabricado' && (produto.tempo_producao_metros_hora || produto.lead_time_dias || produto.custo_total_por_metro || produto.margem_real_percentual || produto.instrucoes_tecnicas) && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Informações de Fabricação</CardTitle>
@@ -274,20 +316,204 @@ export function ProdutoDetailModal({
               </Card>
             )}
 
+            {/* Informações Tributárias/Fiscais */}
+            {(produto.ncm || produto.cfop || produto.cst_icms) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Informações Tributárias (NF-e)</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Dados Fiscais Básicos */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {produto.ncm && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">NCM</p>
+                        <p className="font-medium font-mono">{formatarNCM(produto.ncm)}</p>
+                      </div>
+                    )}
+                    {produto.origem_mercadoria !== undefined && produto.origem_mercadoria !== null && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">Origem</p>
+                        <p className="font-medium">{produto.origem_mercadoria} - Nacional</p>
+                      </div>
+                    )}
+                    {produto.cfop && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">CFOP</p>
+                        <p className="font-medium font-mono">{produto.cfop}</p>
+                      </div>
+                    )}
+                    {produto.cest && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">CEST</p>
+                        <p className="font-medium font-mono">{produto.cest}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ICMS */}
+                  {(produto.cst_icms || produto.aliquota_icms) && (
+                    <>
+                      <Separator />
+                      <div>
+                        <p className="text-sm font-medium mb-2">ICMS</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {produto.cst_icms && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">CST ICMS</p>
+                              <p className="font-medium font-mono">{produto.cst_icms}</p>
+                            </div>
+                          )}
+                          {produto.aliquota_icms !== undefined && produto.aliquota_icms !== null && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Alíquota ICMS</p>
+                              <p className="font-medium">{produto.aliquota_icms}%</p>
+                            </div>
+                          )}
+                          {produto.reducao_bc_icms !== undefined && produto.reducao_bc_icms !== null && produto.reducao_bc_icms > 0 && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Redução BC ICMS</p>
+                              <p className="font-medium">{produto.reducao_bc_icms}%</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* IPI */}
+                  {(produto.cst_ipi || produto.aliquota_ipi) && (
+                    <>
+                      <Separator />
+                      <div>
+                        <p className="text-sm font-medium mb-2">IPI</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {produto.cst_ipi && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">CST IPI</p>
+                              <p className="font-medium font-mono">{produto.cst_ipi}</p>
+                            </div>
+                          )}
+                          {produto.aliquota_ipi !== undefined && produto.aliquota_ipi !== null && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Alíquota IPI</p>
+                              <p className="font-medium">{produto.aliquota_ipi}%</p>
+                            </div>
+                          )}
+                          {produto.codigo_enquadramento_ipi && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Cód. Enquadramento</p>
+                              <p className="font-medium font-mono">{produto.codigo_enquadramento_ipi}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* PIS/COFINS */}
+                  {(produto.cst_pis || produto.cst_cofins) && (
+                    <>
+                      <Separator />
+                      <div>
+                        <p className="text-sm font-medium mb-2">PIS/COFINS</p>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          {produto.cst_pis && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">CST PIS</p>
+                              <p className="font-medium font-mono">{produto.cst_pis}</p>
+                            </div>
+                          )}
+                          {produto.aliquota_pis !== undefined && produto.aliquota_pis !== null && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Alíquota PIS</p>
+                              <p className="font-medium">{produto.aliquota_pis}%</p>
+                            </div>
+                          )}
+                          {produto.cst_cofins && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">CST COFINS</p>
+                              <p className="font-medium font-mono">{produto.cst_cofins}</p>
+                            </div>
+                          )}
+                          {produto.aliquota_cofins !== undefined && produto.aliquota_cofins !== null && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Alíquota COFINS</p>
+                              <p className="font-medium">{produto.aliquota_cofins}%</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Metadata */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Informações do Sistema</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Criado em</p>
-                    <p className="text-sm">{formatBrazilianDateTimeLong(produto.created_at)}</p>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Criado em</p>
+                      <p className="text-sm">{formatBrazilianDateTimeLong(produto.created_at)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Última atualização</p>
+                      <p className="text-sm">{formatBrazilianDateTimeLong(produto.updated_at)}</p>
+                    </div>
                   </div>
+
+                  <Separator />
+
+                  {/* Sincronização com Base ERP */}
                   <div>
-                    <p className="text-sm text-muted-foreground">Última atualização</p>
-                    <p className="text-sm">{formatBrazilianDateTimeLong(produto.updated_at)}</p>
+                    <p className="text-sm font-medium mb-3">Sincronização com Base ERP</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Status</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {produto.sincronizado ? (
+                            <>
+                              <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              <span className="text-sm font-medium text-green-600">Sincronizado</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="h-4 w-4 text-amber-600" />
+                              <span className="text-sm font-medium text-amber-600">Não sincronizado</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {produto.base_id && (
+                        <div>
+                          <p className="text-sm text-muted-foreground">ID no Base ERP</p>
+                          <p className="text-sm font-medium">{produto.base_id}</p>
+                        </div>
+                      )}
+                      {produto.data_sincronizacao && (
+                        <div>
+                          <p className="text-sm text-muted-foreground">Última sincronização</p>
+                          <p className="text-sm">{formatBrazilianDateTimeLong(produto.data_sincronizacao)}</p>
+                        </div>
+                      )}
+                    </div>
+                    {onSync && !produto.sincronizado && (
+                      <Button
+                        onClick={handleSync}
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 border-blue-300 text-blue-700 hover:bg-blue-50"
+                      >
+                        <Cloud className="h-4 w-4 mr-2" />
+                        Sincronizar com Base ERP
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardContent>

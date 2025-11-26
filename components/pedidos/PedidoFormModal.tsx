@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import type { PedidoCompleto, Cliente, ProdutoComCusto, MateriaPrima } from '../../lib/database.types';
 import { formatNumber, formatQuantity, formatCurrency } from '../../lib/format';
@@ -24,15 +24,52 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import {
-  Plus, Trash2, ShoppingCart, Save, X, User, List, DollarSign, Truck, MessageSquare
+  Plus, Trash2, ShoppingCart, Save, X, User, List, DollarSign, Truck, MessageSquare,
+  AlertTriangle, ArrowRight, Check, RotateCcw
 } from 'lucide-react';
 import {
   verificarEstoqueMateriasPrimas,
   verificarEstoqueProdutoRevenda,
 } from '../../lib/calculos';
+import { buscarLotesDisponiveis } from '../../lib/estoque';
+import { supabase } from '../../lib/supabase';
+import { baseClient } from '../../lib/base';
+
+// Tipos de cobrança disponíveis
+const TIPOS_COBRANCA = [
+  { value: 'BOLETO', label: 'Boleto' },
+  { value: 'PIX', label: 'PIX' },
+  { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
+  { value: 'DEBIT_CARD', label: 'Cartão de Débito' },
+  { value: 'TRANSFER', label: 'Transferência' },
+  { value: 'DEPOSIT', label: 'Depósito' },
+  { value: 'CASH', label: 'Dinheiro' },
+];
+
+// Tipos de frete disponíveis
+const TIPOS_FRETE = [
+  { value: 'CIF', label: 'CIF (Frete por conta do vendedor)' },
+  { value: 'FOB', label: 'FOB (Frete por conta do comprador)' },
+  { value: 'SEM_FRETE', label: 'Sem Frete (Retira)' },
+];
+
+interface BaseBankOption {
+  id: number;
+  name: string;
+  code: string | null;
+}
+
+interface AlertaCustoLote {
+  materia_prima_id: string;
+  materia_prima_nome: string;
+  custo_atual: number;
+  custo_lote: number;
+  diferenca_percentual: number;
+}
 
 interface PedidoItemForm {
   produto_id: string;
@@ -52,12 +89,17 @@ interface PedidoItemForm {
     estoque_disponivel_kg: number;
     disponivel: boolean;
     unidade_estoque: string;
+    // Novos campos para custo do lote
+    custo_administrativo?: number;
+    custo_lote?: number;
+    tem_diferenca_custo?: boolean;
   }>;
   estoque_produto?: {
     disponivel: number;
     necessario: number;
     suficiente: boolean;
   };
+  alertas_custo?: AlertaCustoLote[];
 }
 
 interface PedidoFormModalProps {
@@ -83,6 +125,19 @@ export default function PedidoFormModal({
   materiasPrimas,
   onSuccess,
 }: PedidoFormModalProps) {
+  // Estado para alertas de custo consolidados
+  const [alertasCustoGlobal, setAlertasCustoGlobal] = useState<AlertaCustoLote[]>([]);
+  const [verificandoCustos, setVerificandoCustos] = useState(false);
+  const [mostrarModalCusto, setMostrarModalCusto] = useState(false);
+
+  // Estado para bancos
+  const [bancos, setBancos] = useState<BaseBankOption[]>([]);
+  const [carregandoBancos, setCarregandoBancos] = useState(false);
+
+  // Transportadoras do banco local
+  const [transportadoras, setTransportadoras] = useState<{ id: string; nome: string }[]>([]);
+  const [carregandoTransportadoras, setCarregandoTransportadoras] = useState(false);
+
   const [formData, setFormData] = useState({
     cliente_id: '',
     tipo: 'orcamento' as 'orcamento' | 'pedido_confirmado',
@@ -96,9 +151,136 @@ export default function PedidoFormModal({
     forma_pagamento: '',
     condicoes_pagamento: '',
     observacoes: '',
+    // Dados de Pagamento para NF-e
+    tipo_cobranca: 'BOLETO',
+    banco_id: 0,
+    data_vencimento: '',
+    // Dados de Transporte
+    transportadora_id: '',
+    tipo_frete: 'CIF',
   });
 
   const [itens, setItens] = useState<PedidoItemForm[]>([]);
+
+  // Função para verificar custos dos lotes vs custos administrativos
+  const verificarCustosLotes = async (itensAtuais: PedidoItemForm[]) => {
+    const alertas: AlertaCustoLote[] = [];
+    const materiaisVerificados = new Set<string>();
+
+    for (const item of itensAtuais) {
+      if (item.tipo_produto !== 'fabricado' || !item.materiais_necessarios) continue;
+
+      for (const material of item.materiais_necessarios) {
+        // Evitar verificar o mesmo material mais de uma vez
+        if (materiaisVerificados.has(material.materia_prima_id)) continue;
+        materiaisVerificados.add(material.materia_prima_id);
+
+        // Buscar matéria-prima para obter custo administrativo atual
+        const mp = materiasPrimas.find(m => m.id === material.materia_prima_id);
+        if (!mp) continue;
+
+        const custoAdministrativo = Number(mp.custo_por_unidade) || 0;
+
+        // Buscar lotes disponíveis (PEPS - primeiro a entrar, primeiro a sair)
+        const { lotes } = await buscarLotesDisponiveis(material.materia_prima_id);
+
+        if (lotes && lotes.length > 0) {
+          // Pegar o primeiro lote (PEPS)
+          const lotePEPS = lotes[0];
+          const custoLote = Number(lotePEPS.custo_real_por_kg) || 0;
+
+          // Atualizar os campos de custo no material
+          material.custo_administrativo = custoAdministrativo;
+          material.custo_lote = custoLote;
+
+          // Verificar se há diferença significativa (> 0.01 para evitar problemas de precisão)
+          if (Math.abs(custoLote - custoAdministrativo) > 0.01 && custoAdministrativo > 0) {
+            const diferencaPercentual = ((custoLote - custoAdministrativo) / custoAdministrativo) * 100;
+            material.tem_diferenca_custo = true;
+
+            alertas.push({
+              materia_prima_id: material.materia_prima_id,
+              materia_prima_nome: material.materia_nome,
+              custo_atual: custoAdministrativo,
+              custo_lote: custoLote,
+              diferenca_percentual: diferencaPercentual,
+            });
+          } else {
+            material.tem_diferenca_custo = false;
+          }
+        }
+      }
+    }
+
+    return alertas;
+  };
+
+  // Verificar custos quando itens mudam
+  useEffect(() => {
+    const verificar = async () => {
+      if (itens.length === 0) {
+        setAlertasCustoGlobal([]);
+        return;
+      }
+
+      // Verificar se tem algum produto fabricado com materiais
+      const temFabricado = itens.some(
+        item => item.tipo_produto === 'fabricado' && item.materiais_necessarios && item.materiais_necessarios.length > 0
+      );
+
+      if (!temFabricado) {
+        setAlertasCustoGlobal([]);
+        return;
+      }
+
+      setVerificandoCustos(true);
+      const alertas = await verificarCustosLotes(itens);
+      setAlertasCustoGlobal(alertas);
+      setVerificandoCustos(false);
+    };
+
+    verificar();
+  }, [itens, materiasPrimas]);
+
+  // Carregar bancos e transportadoras quando modal abre
+  useEffect(() => {
+    if (isOpen) {
+      carregarBancosETransportadoras();
+    }
+  }, [isOpen]);
+
+  const carregarBancosETransportadoras = async () => {
+    setCarregandoBancos(true);
+    try {
+      // Carregar bancos do Base ERP
+      const bancosResponse = await baseClient.listBanks();
+      const bancosData = (bancosResponse.data as any)?.content || bancosResponse.data || [];
+      if (Array.isArray(bancosData)) {
+        setBancos(bancosData);
+        // Se não tiver banco selecionado, selecionar o primeiro
+        if (bancosData.length > 0 && !formData.banco_id) {
+          setFormData(prev => ({ ...prev, banco_id: bancosData[0].id }));
+        }
+      }
+
+      // Carregar transportadoras do banco local
+      setCarregandoTransportadoras(true);
+      const { data: transportadorasData, error: transportadorasError } = await supabase
+        .from('transportadoras')
+        .select('id, nome')
+        .eq('ativo', true)
+        .order('nome');
+
+      if (!transportadorasError && transportadorasData) {
+        setTransportadoras(transportadorasData);
+      }
+      setCarregandoTransportadoras(false);
+    } catch (error) {
+      console.error('Erro ao carregar bancos/transportadoras:', error);
+    } finally {
+      setCarregandoBancos(false);
+    }
+  };
 
   // Initialize form when editing
   useEffect(() => {
@@ -116,6 +298,12 @@ export default function PedidoFormModal({
         forma_pagamento: pedido.forma_pagamento || '',
         condicoes_pagamento: pedido.condicoes_pagamento || '',
         observacoes: pedido.observacoes || '',
+        // Novos campos
+        tipo_cobranca: pedido.tipo_cobranca || 'BOLETO',
+        banco_id: pedido.banco_id || 0,
+        data_vencimento: pedido.data_vencimento || '',
+        transportadora_id: pedido.transportadora_id || '',
+        tipo_frete: pedido.tipo_frete || 'CIF',
       });
 
       if (pedido.itens) {
@@ -139,6 +327,10 @@ export default function PedidoFormModal({
   }, [pedido, isOpen]);
 
   const resetForm = () => {
+    // Calcular data de vencimento padrão (30 dias)
+    const dataVencimentoPadrao = new Date();
+    dataVencimentoPadrao.setDate(dataVencimentoPadrao.getDate() + 30);
+
     setFormData({
       cliente_id: '',
       tipo: 'orcamento',
@@ -152,9 +344,24 @@ export default function PedidoFormModal({
       forma_pagamento: '',
       condicoes_pagamento: '',
       observacoes: '',
+      // Novos campos com valores padrão
+      tipo_cobranca: 'BOLETO',
+      banco_id: bancos.length > 0 ? bancos[0].id : 0,
+      data_vencimento: dataVencimentoPadrao.toISOString().split('T')[0],
+      transportadora_id: '',
+      tipo_frete: 'CIF',
     });
     setItens([]);
   };
+
+  const clientesOptions = useMemo(() => {
+    return clientes
+      .filter(c => c.ativo)
+      .map(cliente => ({
+        value: cliente.id,
+        label: cliente.nome_fantasia || cliente.razao_social || 'Cliente sem nome',
+      }));
+  }, [clientes]);
 
   const addItem = () => {
     const novoItem: PedidoItemForm = {
@@ -296,6 +503,60 @@ export default function PedidoFormModal({
     calcularTotais(newItens);
   };
 
+  // Atualizar custo administrativo de uma matéria-prima
+  const atualizarCustoMateriaPrima = async (materiaPrimaId: string, novoCusto: number) => {
+    try {
+      // Buscar custo atual para histórico
+      const { data: mp } = await supabase
+        .from('materias_primas')
+        .select('custo_por_unidade, historico_custos')
+        .eq('id', materiaPrimaId)
+        .single();
+
+      const historico = mp?.historico_custos || [];
+      historico.push({
+        data: new Date().toISOString(),
+        custo_anterior: mp?.custo_por_unidade || 0,
+        custo_novo: novoCusto,
+        motivo: 'Atualização manual durante criação de orçamento (PEPS)',
+      });
+
+      // Atualizar custo
+      const { error } = await supabase
+        .from('materias_primas')
+        .update({
+          custo_por_unidade: novoCusto,
+          historico_custos: historico,
+        })
+        .eq('id', materiaPrimaId);
+
+      if (error) throw error;
+
+      return { success: true };
+    } catch (err) {
+      console.error('Erro ao atualizar custo:', err);
+      return { success: false, error: err };
+    }
+  };
+
+  // Lidar com decisão do gestor sobre custo
+  const handleDecisaoCusto = async (alerta: AlertaCustoLote, acao: 'atualizar' | 'manter') => {
+    if (acao === 'atualizar') {
+      const result = await atualizarCustoMateriaPrima(alerta.materia_prima_id, alerta.custo_lote);
+      if (result.success) {
+        toast.success(`Custo de ${alerta.materia_prima_nome} atualizado para ${formatCurrency(alerta.custo_lote)}/kg`);
+        // Remover alerta da lista
+        setAlertasCustoGlobal(prev => prev.filter(a => a.materia_prima_id !== alerta.materia_prima_id));
+      } else {
+        toast.error('Erro ao atualizar custo');
+      }
+    } else {
+      toast.info(`Custo de ${alerta.materia_prima_nome} mantido em ${formatCurrency(alerta.custo_atual)}/kg`);
+      // Remover alerta da lista
+      setAlertasCustoGlobal(prev => prev.filter(a => a.materia_prima_id !== alerta.materia_prima_id));
+    }
+  };
+
   const calcularTotais = (itensAtuais: PedidoItemForm[], frete: number = formData.valor_frete, desconto: number = formData.valor_desconto) => {
     const valorProdutos = itensAtuais.reduce((acc, item) => acc + (item.subtotal || 0), 0);
     const valorFrete = Number(frete) || 0;
@@ -370,6 +631,13 @@ export default function PedidoFormModal({
       forma_pagamento: formData.forma_pagamento || null,
       condicoes_pagamento: formData.condicoes_pagamento || null,
       observacoes: formData.observacoes || null,
+      // Dados de Pagamento para NF-e
+      tipo_cobranca: formData.tipo_cobranca || null,
+      banco_id: formData.banco_id || null,
+      data_vencimento: formData.data_vencimento || null,
+      // Dados de Transporte
+      transportadora_id: formData.transportadora_id || null,
+      tipo_frete: formData.tipo_frete || null,
       itens: itens.map(item => ({
         produto_id: item.produto_id,
         tipo_produto: item.tipo_produto,
@@ -429,21 +697,14 @@ export default function PedidoFormModal({
                   <Label htmlFor="cliente_id" className="text-sm font-medium">
                     Cliente <span className="text-destructive">*</span>
                   </Label>
-                  <Select
+                  <SearchableSelect
+                    options={clientesOptions}
                     value={formData.cliente_id}
                     onValueChange={(value) => setFormData({ ...formData, cliente_id: value })}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder="Selecione um cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clientes.filter(c => c.ativo).map(cliente => (
-                        <SelectItem key={cliente.id} value={cliente.id}>
-                          {cliente.nome_fantasia || cliente.razao_social}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    placeholder="Selecione um cliente"
+                    searchPlaceholder="Buscar cliente..."
+                    emptyText="Nenhum cliente encontrado"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="data_pedido" className="text-sm font-medium">
@@ -665,6 +926,90 @@ export default function PedidoFormModal({
               </Card>
             </div>
 
+            {/* Alertas de Custo - PEPS */}
+            {(alertasCustoGlobal.length > 0 || verificandoCustos) && (
+              <>
+                <Separator />
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-amber-600">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span>Atenção: Diferença de Custo Detectada (PEPS)</span>
+                    {verificandoCustos && (
+                      <RotateCcw className="h-4 w-4 animate-spin ml-2" />
+                    )}
+                  </div>
+
+                  {alertasCustoGlobal.length > 0 && (
+                    <Card className="p-4 border-amber-200 bg-amber-50">
+                      <p className="text-sm text-amber-800 mb-4">
+                        O lote mais antigo (PEPS) possui custo diferente do custo administrativo atual.
+                        Deseja manter o custo atual ou usar o custo do lote antigo?
+                      </p>
+
+                      <div className="space-y-3">
+                        {alertasCustoGlobal.map((alerta) => {
+                          const diferencaPositiva = alerta.diferenca_percentual > 0;
+                          return (
+                            <div
+                              key={alerta.materia_prima_id}
+                              className="bg-white p-3 rounded-lg border border-amber-200"
+                            >
+                              <p className="font-semibold text-sm mb-2">{alerta.materia_prima_nome}</p>
+
+                              {/* Comparação de custos */}
+                              <div className="flex items-center justify-between gap-2 mb-3 text-xs">
+                                <div className="text-center">
+                                  <p className="text-muted-foreground">Administrativo</p>
+                                  <p className="font-mono font-bold text-blue-600">{formatCurrency(alerta.custo_atual)}/kg</p>
+                                </div>
+
+                                <div className="flex flex-col items-center">
+                                  <span className="text-xs text-muted-foreground">vs</span>
+                                  <span className={`text-xs font-semibold ${diferencaPositiva ? 'text-red-600' : 'text-green-600'}`}>
+                                    {diferencaPositiva ? '+' : ''}{formatNumber(alerta.diferenca_percentual, 1)}%
+                                  </span>
+                                </div>
+
+                                <div className="text-center">
+                                  <p className="text-muted-foreground">Lote PEPS</p>
+                                  <p className={`font-mono font-bold ${diferencaPositiva ? 'text-red-600' : 'text-green-600'}`}>
+                                    {formatCurrency(alerta.custo_lote)}/kg
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Botões de ação */}
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="default"
+                                  className="flex-1 gap-1"
+                                  onClick={() => handleDecisaoCusto(alerta, 'manter')}
+                                >
+                                  <Check className="h-3 w-3" />
+                                  Manter {formatCurrency(alerta.custo_atual)}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1"
+                                  onClick={() => handleDecisaoCusto(alerta, 'atualizar')}
+                                >
+                                  Usar lote {formatCurrency(alerta.custo_lote)}
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </Card>
+                  )}
+                </div>
+              </>
+            )}
+
             <Separator />
 
             {/* Valores */}
@@ -721,13 +1066,13 @@ export default function PedidoFormModal({
 
             <Separator />
 
-            {/* Entrega e Pagamento */}
+            {/* Transporte */}
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                 <Truck className="h-4 w-4" />
-                <span>Entrega e Pagamento</span>
+                <span>Transporte</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="prazo" className="text-sm font-medium">
                     Prazo Entrega (dias)
@@ -740,28 +1085,138 @@ export default function PedidoFormModal({
                   />
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="tipo_frete" className="text-sm font-medium">
+                    Tipo de Frete
+                  </Label>
+                  <Select
+                    value={formData.tipo_frete}
+                    onValueChange={(value) => setFormData({ ...formData, tipo_frete: value })}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIPOS_FRETE.map((tipo) => (
+                        <SelectItem key={tipo.value} value={tipo.value}>
+                          {tipo.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="transportadora" className="text-sm font-medium">
+                    Transportadora
+                  </Label>
+                  <Select
+                    value={formData.transportadora_id || 'none'}
+                    onValueChange={(value) => setFormData({ ...formData, transportadora_id: value === 'none' ? '' : value })}
+                    disabled={carregandoTransportadoras}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={carregandoTransportadoras ? "Carregando..." : "Selecione..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Nenhuma</SelectItem>
+                      {transportadoras.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Pagamento */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <DollarSign className="h-4 w-4" />
+                <span>Pagamento (para NF-e)</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tipo_cobranca" className="text-sm font-medium">
+                    Tipo de Cobrança
+                  </Label>
+                  <Select
+                    value={formData.tipo_cobranca}
+                    onValueChange={(value) => setFormData({ ...formData, tipo_cobranca: value })}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIPOS_COBRANCA.map((tipo) => (
+                        <SelectItem key={tipo.value} value={tipo.value}>
+                          {tipo.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="banco" className="text-sm font-medium">
+                    Banco
+                  </Label>
+                  <Select
+                    value={formData.banco_id ? String(formData.banco_id) : ''}
+                    onValueChange={(value) => setFormData({ ...formData, banco_id: Number(value) })}
+                    disabled={carregandoBancos}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={carregandoBancos ? "Carregando..." : "Selecione..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bancos.map((banco) => (
+                        <SelectItem key={banco.id} value={String(banco.id)}>
+                          {banco.name} {banco.code ? `(${banco.code})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="data_vencimento" className="text-sm font-medium">
+                    Data de Vencimento
+                  </Label>
+                  <Input
+                    id="data_vencimento"
+                    type="date"
+                    value={formData.data_vencimento}
+                    onChange={(e) => setFormData({ ...formData, data_vencimento: e.target.value })}
+                    className="h-10"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
                   <Label htmlFor="pagamento" className="text-sm font-medium">
-                    Forma de Pagamento
+                    Forma de Pagamento (texto)
                   </Label>
                   <Input
                     id="pagamento"
                     value={formData.forma_pagamento}
                     onChange={(e) => setFormData({ ...formData, forma_pagamento: e.target.value })}
                     className="h-10"
+                    placeholder="Ex: 30/60/90 dias"
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="condicoes" className="text-sm font-medium">
-                  Condições de Pagamento
-                </Label>
-                <Textarea
-                  id="condicoes"
-                  value={formData.condicoes_pagamento}
-                  onChange={(e) => setFormData({ ...formData, condicoes_pagamento: e.target.value })}
-                  rows={2}
-                  className="resize-none"
-                />
+                <div className="space-y-2">
+                  <Label htmlFor="condicoes" className="text-sm font-medium">
+                    Condições de Pagamento
+                  </Label>
+                  <Input
+                    id="condicoes"
+                    value={formData.condicoes_pagamento}
+                    onChange={(e) => setFormData({ ...formData, condicoes_pagamento: e.target.value })}
+                    className="h-10"
+                    placeholder="Ex: À vista com 5% desconto"
+                  />
+                </div>
               </div>
             </div>
 

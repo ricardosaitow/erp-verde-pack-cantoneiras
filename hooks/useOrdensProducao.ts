@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import type { OrdemProducao, OrdemProducaoCompleta } from '../lib/database.types';
+import type { OrdemProducao, OrdemProducaoCompleta, AlertaMudancaLote } from '../lib/database.types';
 import { darBaixaMateriasPrimasProducao } from '../lib/estoque';
 
 export function useOrdensProducao() {
@@ -133,13 +133,15 @@ export function useOrdensProducao() {
       if (error) throw error;
 
       // Se a ordem foi iniciada, dar baixa no estoque de matérias-primas
+      let alertasMudancaCusto: AlertaMudancaLote[] | undefined;
+
       if (ordemSendoIniciada && ordemAtual && ordemAtual.produto) {
         const produto = ordemAtual.produto as any;
         const quantidadeMetros = Number(ordemAtual.quantidade_produzir_metros) || 0;
         const pedidoId = ordemAtual.pedido_id;
 
         if (quantidadeMetros > 0 && produto.id) {
-          const { error: baixaError, errosDetalhados } = await darBaixaMateriasPrimasProducao(
+          const { error: baixaError, errosDetalhados, alertas } = await darBaixaMateriasPrimasProducao(
             produto.id,
             quantidadeMetros,
             ordemAtual.id,
@@ -155,12 +157,22 @@ export function useOrdensProducao() {
             console.warn('Atenção: Estoque de matérias-primas não foi atualizado');
           } else {
             console.log(`✅ Baixa de matérias-primas realizada para ordem ${ordemAtual.numero_op}`);
+
+            // Capturar alertas de mudança de custo
+            if (alertas && alertas.length > 0) {
+              console.log(`⚠️  ${alertas.length} alerta(s) de mudança de custo detectado(s)`);
+              alertasMudancaCusto = alertas;
+            }
           }
         }
       }
-      
+
       await fetchOrdens();
-      return { data, error: null };
+      return {
+        data,
+        error: null,
+        alertas: alertasMudancaCusto
+      };
     } catch (err) {
       return { data: null, error: err instanceof Error ? err.message : 'Erro ao atualizar ordem de produção' };
     }

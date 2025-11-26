@@ -1,7 +1,10 @@
 import { useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import { confirmAction } from '@/lib/toast-utils';
+import { supabase } from '../lib/supabase';
 import { useClientes } from '../hooks/useClientes';
+import { useClienteIntegrado } from '../hooks/useClienteIntegrado';
+import { useClienteAsaas } from '../hooks/useClienteAsaas';
 import type { Cliente, ClienteContato } from '../lib/database.types';
 import { PageHeader, LoadingSpinner, EmptyState } from '@/components/erp';
 import { Button } from '@/components/ui/button';
@@ -13,6 +16,7 @@ import { CpfCnpjInput } from '@/components/ui/cpf-cnpj-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { ClienteDetailModal } from '@/components/clientes/ClienteDetailModal';
@@ -34,7 +38,8 @@ import {
 } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Plus, RefreshCw, Edit, Trash2, AlertTriangle, Users, Save, X, Building2, User, MapPin, CreditCard, FileText, Loader2, CheckCircle2, XCircle, Search } from 'lucide-react';
+import { DataPagination } from '@/components/ui/data-pagination';
+import { Plus, RefreshCw, Edit, Trash2, AlertTriangle, Users, Save, X, Building2, User, MapPin, CreditCard, FileText, Loader2, CheckCircle2, XCircle, Search, Cloud, DollarSign } from 'lucide-react';
 import { buscarCNPJ, validarFormatoCNPJ } from '@/lib/cnpj-api';
 import { buscarEnderecoPorCEP, validarFormatoCEP } from '@/lib/cep-api';
 import { CepInput } from '@/components/ui/cep-input';
@@ -42,6 +47,8 @@ import { ContatosManager, type ContatoFormData } from '@/components/clientes/Con
 
 export default function ClientesPage() {
   const { clientes, loading, error, create, update, delete: deleteCliente, refresh, fetchContatos } = useClientes();
+  const { criarClienteCompleto, atualizarClienteCompleto, inativarCliente, ativarCliente, loading: loadingIntegrado } = useClienteIntegrado();
+  const { sincronizarClientesBulk, loading: loadingAsaas } = useClienteAsaas();
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<Cliente | null>(null);
 
@@ -50,19 +57,36 @@ export default function ClientesPage() {
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
   const [selectedClienteContatos, setSelectedClienteContatos] = useState<ClienteContato[]>([]);
 
-  // Filter state
+  // Filter state (padrão: mostrar apenas ativos)
   const [filters, setFilters] = useState<FilterState>({
     search: '',
     tipoPessoa: 'todos',
-    status: 'todos',
+    status: 'ativo',  // Padrão: apenas clientes ativos
     cidade: '',
     estado: '',
   });
+
+  // Paginação
+  const [paginaAtual, setPaginaAtual] = useState(1);
+  const [itensPorPagina, setItensPorPagina] = useState(25);
 
   // Aplicar filtros
   const clientesFiltrados = useMemo(() => {
     return applyFilters(clientes, filters);
   }, [clientes, filters]);
+
+  // Calcular paginação
+  const totalPaginas = Math.ceil(clientesFiltrados.length / itensPorPagina);
+  const clientesPaginados = useMemo(() => {
+    const inicio = (paginaAtual - 1) * itensPorPagina;
+    const fim = inicio + itensPorPagina;
+    return clientesFiltrados.slice(inicio, fim);
+  }, [clientesFiltrados, paginaAtual, itensPorPagina]);
+
+  // Resetar para página 1 quando filtros mudarem
+  useMemo(() => {
+    setPaginaAtual(1);
+  }, [clientesFiltrados.length]);
 
   // CNPJ API state
   const [loadingCNPJ, setLoadingCNPJ] = useState(false);
@@ -77,6 +101,10 @@ export default function ClientesPage() {
   // Contatos state
   const [contatos, setContatos] = useState<ContatoFormData[]>([]);
 
+  // Bulk sync state
+  const [showBulkSyncModal, setShowBulkSyncModal] = useState(false);
+  const [bulkSyncResult, setBulkSyncResult] = useState<{ sincronizados: number; erros: number; total: number } | null>(null);
+
   // Form state
   const [formData, setFormData] = useState({
     tipo_pessoa: 'juridica' as 'fisica' | 'juridica',
@@ -84,10 +112,15 @@ export default function ClientesPage() {
     nome_fantasia: '',
     cnpj_cpf: '',
     inscricao_estadual: '',
+    inscricao_municipal: '',
     email: '',
     telefone: '',
     celular: '',
     endereco_completo: '',
+    endereco: '',
+    numero: '',
+    complemento: '',
+    bairro: '',
     cep: '',
     cidade: '',
     estado: '',
@@ -96,6 +129,9 @@ export default function ClientesPage() {
     limite_credito: '',
     observacoes: '',
     ativo: true,
+    sincronizarBase: true,
+    sincronizarAsaas: true,
+    notificarAsaas: true,
   });
 
   const resetForm = () => {
@@ -105,10 +141,15 @@ export default function ClientesPage() {
       nome_fantasia: '',
       cnpj_cpf: '',
       inscricao_estadual: '',
+      inscricao_municipal: '',
       email: '',
       telefone: '',
       celular: '',
       endereco_completo: '',
+      endereco: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
       cep: '',
       cidade: '',
       estado: '',
@@ -117,6 +158,9 @@ export default function ClientesPage() {
       limite_credito: '',
       observacoes: '',
       ativo: true,
+      sincronizarBase: true,
+      sincronizarAsaas: true,
+      notificarAsaas: true,
     });
     setContatos([]);
     setEditingItem(null);
@@ -220,10 +264,15 @@ export default function ClientesPage() {
       nome_fantasia: cliente.nome_fantasia || '',
       cnpj_cpf: cliente.cnpj_cpf || '',
       inscricao_estadual: cliente.inscricao_estadual || '',
+      inscricao_municipal: cliente.inscricao_municipal || '',
       email: cliente.email || '',
       telefone: cliente.telefone || '',
       celular: cliente.celular || '',
       endereco_completo: cliente.endereco_completo || '',
+      endereco: cliente.endereco || '',
+      numero: cliente.numero || '',
+      complemento: cliente.complemento || '',
+      bairro: cliente.bairro || '',
       cep: cliente.cep || '',
       cidade: cliente.cidade || '',
       estado: cliente.estado || '',
@@ -232,6 +281,9 @@ export default function ClientesPage() {
       limite_credito: cliente.limite_credito?.toString() || '',
       observacoes: cliente.observacoes || '',
       ativo: cliente.ativo,
+      sincronizarBase: true,
+      sincronizarAsaas: true,
+      notificarAsaas: true,
     });
 
     // Carregar contatos do cliente
@@ -255,22 +307,43 @@ export default function ClientesPage() {
     setShowDetailModal(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleToggleActive = (id: string, isActive: boolean) => {
+    const action = isActive ? 'inativar' : 'ativar';
+    const actionPast = isActive ? 'inativado' : 'ativado';
+
     confirmAction({
-      title: 'Tem certeza que deseja excluir este cliente?',
-      description: 'Esta ação não pode ser desfeita.',
-      confirmLabel: 'Confirmar Exclusão',
+      title: `Tem certeza que deseja ${action} este cliente?`,
+      description: isActive
+        ? 'O cliente será marcado como inativo no ERP, Asaas e Base ERP. Você pode reativá-lo depois.'
+        : 'O cliente será reativado e voltará a aparecer nas listagens.',
+      confirmLabel: `Confirmar ${action.charAt(0).toUpperCase() + action.slice(1)}`,
       onConfirm: async () => {
-        const { error: err } = await deleteCliente(id);
+        const { error: err } = isActive
+          ? await inativarCliente(id)
+          : await ativarCliente(id);
+
         if (err) {
-          toast.error('Erro ao excluir cliente: ' + err);
+          toast.error(`Erro ao ${action} cliente: ` + err);
         } else {
-          toast.success('Cliente excluído com sucesso!');
-          // Fechar o modal de detalhes após exclusão bem-sucedida
+          // Fechar o modal de detalhes após ação bem-sucedida
           setShowDetailModal(false);
+          // Recarregar lista
+          await refresh();
         }
       }
     });
+  };
+
+  const handleBulkSync = async () => {
+    setBulkSyncResult(null);
+    try {
+      const resultado = await sincronizarClientesBulk({
+        somenteNaoSincronizados: true,
+      });
+      setBulkSyncResult(resultado);
+    } catch (err) {
+      console.error('Erro na sincronização bulk:', err);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -322,19 +395,119 @@ export default function ClientesPage() {
     }));
 
     if (editingItem) {
-      const { error: err } = await update(editingItem.id, clienteData, contatosParaSalvar);
-      if (err) {
-        toast.error('Erro ao atualizar cliente: ' + err);
+      // Atualizar cliente existente com integração Asaas
+      try {
+        await atualizarClienteCompleto(editingItem.id, {
+          razao_social: formData.razao_social,
+          nome_fantasia: formData.nome_fantasia || undefined,
+          cnpj_cpf: formData.cnpj_cpf || undefined,
+          email: formData.email || undefined,
+          telefone: formData.telefone || undefined,
+          celular: formData.celular || undefined,
+          cep: formData.cep || undefined,
+          endereco: formData.endereco || formData.endereco_completo.split(',')[0]?.trim() || undefined,
+          numero: formData.numero || formData.endereco_completo.split(',')[1]?.trim() || undefined,
+          complemento: formData.complemento || formData.endereco_completo.split(',').slice(2).join(',').trim() || undefined,
+          bairro: formData.bairro || undefined,
+          cidade: formData.cidade || undefined,
+          estado: formData.estado || undefined,
+          inscricao_estadual: formData.inscricao_estadual || undefined,
+          inscricao_municipal: formData.inscricao_municipal || undefined,
+          contato_principal: formData.contato_principal || undefined,
+          condicoes_pagamento: formData.condicoes_pagamento || undefined,
+          limite_credito: formData.limite_credito ? Number(formData.limite_credito) : undefined,
+          observacoes: formData.observacoes || undefined,
+          sincronizarBase: formData.sincronizarBase,
+          sincronizarAsaas: formData.sincronizarAsaas,
+        });
+
+        // Atualizar contatos separadamente
+        if (contatosParaSalvar.length > 0) {
+          // Deletar contatos antigos
+          await supabase
+            .from('clientes_contatos')
+            .delete()
+            .eq('cliente_id', editingItem.id);
+
+          // Inserir novos contatos
+          const contatosComClienteId = contatosParaSalvar.map(contato => ({
+            ...contato,
+            cliente_id: editingItem.id,
+          }));
+
+          const { error: contatosError } = await supabase
+            .from('clientes_contatos')
+            .insert(contatosComClienteId);
+
+          if (contatosError) {
+            console.error('Erro ao atualizar contatos:', contatosError);
+            toast.warning('Cliente atualizado, mas houve erro ao salvar contatos');
+          }
+        }
+
+        await refresh();
+      } catch (err: any) {
+        toast.error('Erro ao atualizar cliente: ' + err.message);
         return;
       }
-      toast.success('Cliente atualizado com sucesso!');
     } else {
-      const { error: err } = await create(clienteData, contatosParaSalvar);
-      if (err) {
-        toast.error('Erro ao criar cliente: ' + err);
+      // Criar novo cliente com integração Asaas
+      try {
+        const clienteCriado = await criarClienteCompleto({
+          tipo_pessoa: formData.tipo_pessoa,
+          razao_social: formData.razao_social,
+          nome_fantasia: formData.nome_fantasia || undefined,
+          cnpj_cpf: formData.cnpj_cpf,
+          email: formData.email || undefined,
+          telefone: formData.telefone || undefined,
+          celular: formData.celular || undefined,
+          cep: formData.cep || undefined,
+          endereco: formData.endereco || formData.endereco_completo.split(',')[0]?.trim() || undefined,
+          numero: formData.numero || formData.endereco_completo.split(',')[1]?.trim() || undefined,
+          complemento: formData.complemento || formData.endereco_completo.split(',').slice(2).join(',').trim() || undefined,
+          bairro: formData.bairro || undefined,
+          cidade: formData.cidade || undefined,
+          estado: formData.estado || undefined,
+          inscricao_estadual: formData.inscricao_estadual || undefined,
+          inscricao_municipal: formData.inscricao_municipal || undefined,
+          contato_principal: formData.contato_principal || undefined,
+          condicoes_pagamento: formData.condicoes_pagamento || undefined,
+          limite_credito: formData.limite_credito ? Number(formData.limite_credito) : undefined,
+          group_name: undefined, // Será adicionado futuramente se necessário
+          observacoes: formData.observacoes || undefined,
+          contatos: contatos.map(c => ({
+            tipo_contato: c.tipo_contato,
+            nome_responsavel: c.nome_responsavel,
+            email: c.email,
+            telefone: c.telefone,
+          })),
+          sincronizarBase: formData.sincronizarBase,
+          sincronizarAsaas: formData.sincronizarAsaas,
+          notificarAsaas: formData.notificarAsaas,
+        });
+
+        // Criar contatos separadamente
+        if (contatosParaSalvar.length > 0) {
+          const contatosComClienteId = contatosParaSalvar.map(contato => ({
+            ...contato,
+            cliente_id: clienteCriado.cliente.id,
+          }));
+
+          const { error: contatosError } = await supabase
+            .from('clientes_contatos')
+            .insert(contatosComClienteId);
+
+          if (contatosError) {
+            console.error('Erro ao criar contatos:', contatosError);
+            toast.warning('Cliente criado, mas houve erro ao salvar contatos');
+          }
+        }
+
+        await refresh();
+      } catch (err: any) {
+        toast.error('Erro ao criar cliente: ' + err.message);
         return;
       }
-      toast.success('Cliente criado com sucesso!');
     }
 
     setShowModal(false);
@@ -378,6 +551,10 @@ export default function ClientesPage() {
         <Button type="button" onClick={() => refresh()} variant="outline" size="sm">
           <RefreshCw className="h-4 w-4 mr-2" />
           Atualizar
+        </Button>
+        <Button type="button" onClick={() => setShowBulkSyncModal(true)} variant="outline" size="sm" className="border-blue-300 text-blue-700 hover:bg-blue-50">
+          <Cloud className="h-4 w-4 mr-2" />
+          Sincronizar com Asaas
         </Button>
         <Button type="button" onClick={() => { resetForm(); setShowModal(true); }}>
           <Plus className="h-4 w-4 mr-2" />
@@ -425,7 +602,7 @@ export default function ClientesPage() {
                   </td>
                 </tr>
               ) : (
-                clientesFiltrados.map((cliente) => (
+                clientesPaginados.map((cliente) => (
                   <tr
                     key={cliente.id}
                     className="hover:bg-muted/50 cursor-pointer transition-colors"
@@ -446,6 +623,19 @@ export default function ClientesPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Paginação */}
+        <DataPagination
+          currentPage={paginaAtual}
+          totalPages={totalPaginas}
+          totalItems={clientesFiltrados.length}
+          itemsPerPage={itensPorPagina}
+          onPageChange={setPaginaAtual}
+          onItemsPerPageChange={(value) => {
+            setItensPorPagina(value);
+            setPaginaAtual(1);
+          }}
+        />
       </Card>
 
       {/* Detail Modal */}
@@ -455,7 +645,7 @@ export default function ClientesPage() {
         open={showDetailModal}
         onClose={() => setShowDetailModal(false)}
         onEdit={handleEdit}
-        onDelete={handleDelete}
+        onToggleActive={(id) => handleToggleActive(id, selectedCliente?.ativo || false)}
       />
 
       {/* Dialog Form */}
@@ -568,17 +758,29 @@ export default function ClientesPage() {
                 />
               </div>
 
-              {/* Inscrição Estadual (apenas para PJ) */}
+              {/* Inscrições (apenas para PJ) */}
               {formData.tipo_pessoa === 'juridica' && (
-                <div className="space-y-2">
-                  <Label htmlFor="inscricao_estadual" className="text-sm font-medium">Inscrição Estadual</Label>
-                  <Input
-                    id="inscricao_estadual"
-                    value={formData.inscricao_estadual}
-                    onChange={(e) => setFormData({ ...formData, inscricao_estadual: e.target.value })}
-                    className="h-10"
-                    placeholder="Ex: 123.456.789.012"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="inscricao_estadual" className="text-sm font-medium">Inscrição Estadual</Label>
+                    <Input
+                      id="inscricao_estadual"
+                      value={formData.inscricao_estadual}
+                      onChange={(e) => setFormData({ ...formData, inscricao_estadual: e.target.value })}
+                      className="h-10"
+                      placeholder="Ex: 123.456.789.012"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="inscricao_municipal" className="text-sm font-medium">Inscrição Municipal</Label>
+                    <Input
+                      id="inscricao_municipal"
+                      value={formData.inscricao_municipal}
+                      onChange={(e) => setFormData({ ...formData, inscricao_municipal: e.target.value })}
+                      className="h-10"
+                      placeholder="Ex: 987.654.321"
+                    />
+                  </div>
                 </div>
               )}
 
@@ -763,6 +965,82 @@ export default function ClientesPage() {
 
             <Separator />
 
+            {/* Integrações - Apenas para novos clientes */}
+            {!editingItem && (
+              <>
+                {/* Integração Base ERP */}
+                <div className="space-y-4 p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-green-900 dark:text-green-100">
+                    <Cloud className="h-4 w-4" />
+                    <span>Integração com Base ERP (Fiscal)</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="sincronizarBase" className="text-sm font-medium">
+                          Sincronizar com Base ERP
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Cliente será criado automaticamente no Base ERP para emissão de NF-e
+                        </p>
+                      </div>
+                      <Switch
+                        id="sincronizarBase"
+                        checked={formData.sincronizarBase}
+                        onCheckedChange={(checked) => setFormData({ ...formData, sincronizarBase: checked })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Integração Asaas */}
+                <div className="space-y-4 p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
+                    <DollarSign className="h-4 w-4" />
+                    <span>Integração com Asaas (Pagamentos)</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="sincronizarAsaas" className="text-sm font-medium">
+                          Sincronizar com Asaas
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Cliente será criado automaticamente no Asaas para receber cobranças
+                        </p>
+                      </div>
+                      <Switch
+                        id="sincronizarAsaas"
+                        checked={formData.sincronizarAsaas}
+                        onCheckedChange={(checked) => setFormData({ ...formData, sincronizarAsaas: checked })}
+                      />
+                    </div>
+
+                    {formData.sincronizarAsaas && (
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label htmlFor="notificarAsaas" className="text-sm font-medium">
+                            Enviar Notificações
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Cliente receberá emails e SMS sobre cobranças
+                          </p>
+                        </div>
+                        <Switch
+                          id="notificarAsaas"
+                          checked={formData.notificarAsaas}
+                          onCheckedChange={(checked) => setFormData({ ...formData, notificarAsaas: checked })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <Separator />
+              </>
+            )}
+
             {/* Observações e Status */}
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
@@ -803,14 +1081,119 @@ export default function ClientesPage() {
                 setShowModal(false);
                 resetForm();
               }}
+              disabled={loadingIntegrado}
               className="gap-2"
             >
               <X className="h-4 w-4" />
               Cancelar
             </Button>
-            <Button type="submit" onClick={handleSubmit} className="gap-2">
-              <Save className="h-4 w-4" />
-              {editingItem ? 'Atualizar' : 'Salvar'}
+            <Button type="submit" onClick={handleSubmit} disabled={loadingIntegrado} className="gap-2">
+              {loadingIntegrado ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {editingItem ? 'Atualizando...' : 'Salvando...'}
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  {editingItem ? 'Atualizar' : 'Salvar'}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Sync Modal */}
+      <Dialog open={showBulkSyncModal} onOpenChange={setShowBulkSyncModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <Cloud className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <DialogTitle>Sincronizar Clientes com Asaas</DialogTitle>
+                <DialogDescription>
+                  Sincroniza clientes existentes que ainda não estão no Asaas
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <Separator />
+
+          <div className="space-y-4">
+            <Alert className="border-blue-200 bg-blue-50">
+              <AlertTriangle className="h-4 w-4 text-blue-600" />
+              <AlertTitle className="text-blue-900">Como funciona</AlertTitle>
+              <AlertDescription className="text-blue-700 text-sm">
+                <ul className="list-disc list-inside space-y-1 mt-2">
+                  <li>Busca clientes sem <code className="bg-blue-100 px-1 rounded">asaas_customer_id</code></li>
+                  <li>Cria cada cliente no Asaas</li>
+                  <li>Salva o ID retornado pelo Asaas no banco</li>
+                  <li>Exibe resumo ao final</li>
+                </ul>
+              </AlertDescription>
+            </Alert>
+
+            {bulkSyncResult && (
+              <Alert className={bulkSyncResult.erros === 0 ? "border-green-200 bg-green-50" : "border-yellow-200 bg-yellow-50"}>
+                <CheckCircle2 className={`h-4 w-4 ${bulkSyncResult.erros === 0 ? 'text-green-600' : 'text-yellow-600'}`} />
+                <AlertTitle className={bulkSyncResult.erros === 0 ? "text-green-900" : "text-yellow-900"}>
+                  Sincronização Concluída
+                </AlertTitle>
+                <AlertDescription className={`${bulkSyncResult.erros === 0 ? 'text-green-700' : 'text-yellow-700'} text-sm`}>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between">
+                      <span>Total de clientes:</span>
+                      <strong>{bulkSyncResult.total}</strong>
+                    </div>
+                    <div className="flex justify-between text-green-700">
+                      <span>Sincronizados:</span>
+                      <strong>{bulkSyncResult.sincronizados}</strong>
+                    </div>
+                    {bulkSyncResult.erros > 0 && (
+                      <div className="flex justify-between text-red-700">
+                        <span>Erros:</span>
+                        <strong>{bulkSyncResult.erros}</strong>
+                      </div>
+                    )}
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowBulkSyncModal(false);
+                setBulkSyncResult(null);
+              }}
+              disabled={loadingAsaas}
+            >
+              Fechar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleBulkSync}
+              disabled={loadingAsaas}
+              className="gap-2 bg-blue-600 hover:bg-blue-700"
+            >
+              {loadingAsaas ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Sincronizando...
+                </>
+              ) : (
+                <>
+                  <Cloud className="h-4 w-4" />
+                  Iniciar Sincronização
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

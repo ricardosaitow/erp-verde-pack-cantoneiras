@@ -21,10 +21,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, RefreshCw, AlertTriangle, Package } from 'lucide-react';
+import { Plus, RefreshCw, AlertTriangle, Package, Cloud, CheckCircle2, XCircle } from 'lucide-react';
 
 export default function ProductsPage() {
-  const { produtos, loading, error, create, update, delete: deleteProd, refresh } = useProdutos();
+  const { produtos, loading, error, create, update, delete: deleteProd, refresh, sincronizarComBase, sincronizarTodos } = useProdutos();
   const { categorias, loading: loadingCategorias } = useCategorias();
 
   // Filter state
@@ -136,6 +136,17 @@ export default function ProductsPage() {
           <RefreshCw className="h-4 w-4 mr-2" />
           Atualizar
         </Button>
+        <Button
+          onClick={async () => {
+            await sincronizarTodos();
+          }}
+          variant="outline"
+          size="sm"
+          className="border-blue-300 text-blue-700 hover:bg-blue-50"
+        >
+          <Cloud className="h-4 w-4 mr-2" />
+          Sincronizar Todos
+        </Button>
         <Button onClick={() => { setEditingProduct(null); setIsFormModalOpen(true); }}>
           <Plus className="h-4 w-4 mr-2" />
           Novo Produto
@@ -236,6 +247,7 @@ export default function ProductsPage() {
         }}
         onEdit={handleEditFromDetail}
         onDelete={handleDelete}
+        onSync={sincronizarComBase}
         categoriaNome={categorias.find(c => c.id === selectedProduto?.categoria_id)?.nome}
       />
     </div>

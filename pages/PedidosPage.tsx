@@ -6,6 +6,7 @@ import { useClientes } from '../hooks/useClientes';
 import { useProdutos } from '../hooks/useProdutos';
 import { useMateriasPrimas } from '../hooks/useMateriasPrimas';
 import type { PedidoCompleto, PedidoItem } from '../lib/database.types';
+import type { ResultadoProvisao } from '../lib/estoque';
 import { formatCurrency } from '../lib/format';
 import { PageHeader, LoadingSpinner, EmptyState, StatusBadge } from '@/components/erp';
 import { Button } from '@/components/ui/button';
@@ -24,10 +25,21 @@ import { Plus, RefreshCw, AlertTriangle, ShoppingCart } from 'lucide-react';
 import { PedidosFilter, applyFilters, type FilterState } from '@/components/pedidos/PedidosFilter';
 import { PedidoDetailModal } from '@/components/pedidos/PedidoDetailModal';
 import PedidoFormModal from '../components/pedidos/PedidoFormModal';
+import { ProvisaoAlertaModal } from '@/components/pedidos/ProvisaoAlertaModal';
 import { isTransitionAllowed, type PedidoStatus, type PedidoTipo } from '@/lib/pedido-workflow';
 
 export default function PedidosPage() {
-  const { pedidos, loading, error, create, update, delete: deletePedido, refresh } = usePedidos();
+  const {
+    pedidos,
+    loading,
+    error,
+    create,
+    update,
+    delete: deletePedido,
+    refresh,
+    simularProvisaoPedido,
+    aprovarPedidoComReserva,
+  } = usePedidos();
   const { clientes, loading: loadingClientes } = useClientes();
   const { produtos, loading: loadingProdutos } = useProdutos();
   const { materiasPrimas, loading: loadingMateriasPrimas } = useMateriasPrimas();
@@ -46,6 +58,12 @@ export default function PedidosPage() {
   // Detail modal state
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedPedido, setSelectedPedido] = useState<PedidoCompleto | null>(null);
+
+  // Provisao modal state
+  const [showProvisaoModal, setShowProvisaoModal] = useState(false);
+  const [provisaoResult, setProvisaoResult] = useState<ResultadoProvisao | null>(null);
+  const [pedidoParaAprovar, setPedidoParaAprovar] = useState<PedidoCompleto | null>(null);
+  const [loadingProvisao, setLoadingProvisao] = useState(false);
 
   const filteredPedidos = useMemo(() => {
     return applyFilters(pedidos, filters);
@@ -102,12 +120,32 @@ export default function PedidosPage() {
       return;
     }
 
-    let tipoAtualizado = pedido.tipo;
+    // Se está aprovando, mostrar modal de provisão primeiro
+    if (newStatus === 'aprovado') {
+      setLoadingProvisao(true);
+      setPedidoParaAprovar(pedido);
 
-    // Conversão automática de orçamento aprovado para pedido confirmado
-    if (newStatus === 'aprovado' && pedido.tipo === 'orcamento') {
-      tipoAtualizado = 'pedido_confirmado';
+      try {
+        const { provisao, error: simError } = await simularProvisaoPedido(pedido.id);
+
+        if (simError) {
+          toast.error('Erro ao simular provisão: ' + simError);
+          setLoadingProvisao(false);
+          return;
+        }
+
+        setProvisaoResult(provisao);
+        setShowProvisaoModal(true);
+      } catch (err) {
+        toast.error('Erro ao simular provisão');
+      } finally {
+        setLoadingProvisao(false);
+      }
+      return;
     }
+
+    // Para outros status, atualizar diretamente
+    let tipoAtualizado = pedido.tipo;
 
     const dadosAtualizacao = {
       status: newStatus as PedidoStatus,
@@ -122,6 +160,41 @@ export default function PedidosPage() {
       toast.success('Status atualizado com sucesso!');
       setSelectedPedido({ ...pedido, status: newStatus as any, tipo: tipoAtualizado });
       refresh();
+    }
+  };
+
+  // Handle confirmar aprovação com provisão
+  const handleConfirmarAprovacao = async () => {
+    if (!pedidoParaAprovar || !provisaoResult) return;
+
+    setLoadingProvisao(true);
+
+    try {
+      // Aprovar pedido e reservar lotes
+      const { error } = await aprovarPedidoComReserva(pedidoParaAprovar.id, provisaoResult);
+
+      if (error) {
+        toast.error('Erro ao aprovar pedido: ' + error);
+      } else {
+        const tipoAtualizado = pedidoParaAprovar.tipo === 'orcamento' ? 'pedido_confirmado' : pedidoParaAprovar.tipo;
+
+        // Mostrar resumo dos alertas de estoque
+        const alertasEstoque = provisaoResult.alertas.filter(a => a.tipo === 'estoque_insuficiente');
+        if (alertasEstoque.length > 0) {
+          toast.warning(`Atenção: ${alertasEstoque.length} material(is) com estoque insuficiente`);
+        }
+
+        toast.success('Pedido aprovado e material reservado!');
+        setSelectedPedido({ ...pedidoParaAprovar, status: 'aprovado' as any, tipo: tipoAtualizado });
+        refresh();
+      }
+    } catch (err) {
+      toast.error('Erro ao aprovar pedido');
+    } finally {
+      setLoadingProvisao(false);
+      setShowProvisaoModal(false);
+      setPedidoParaAprovar(null);
+      setProvisaoResult(null);
     }
   };
 
@@ -266,6 +339,20 @@ export default function PedidosPage() {
         onEdit={handleEditFromDetail}
         onDelete={handleDelete}
         onUpdateStatus={handleUpdateStatus}
+      />
+
+      {/* Provisao Modal */}
+      <ProvisaoAlertaModal
+        open={showProvisaoModal}
+        onClose={() => {
+          setShowProvisaoModal(false);
+          setPedidoParaAprovar(null);
+          setProvisaoResult(null);
+        }}
+        onConfirmar={handleConfirmarAprovacao}
+        provisao={provisaoResult}
+        numeroPedido={pedidoParaAprovar?.numero_pedido || ''}
+        loading={loadingProvisao}
       />
     </div>
   );

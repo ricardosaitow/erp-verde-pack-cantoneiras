@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, User, Mail, Phone } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Plus, Trash2, User, Mail, Phone, Star } from 'lucide-react';
 
 export interface ContatoFormData {
   id?: string;
@@ -16,6 +17,7 @@ export interface ContatoFormData {
   email: string;
   telefone: string;
   observacoes?: string;
+  contato_principal_asaas?: boolean;
 }
 
 interface ContatosManagerProps {
@@ -89,7 +91,7 @@ export function ContatosManager({ contatos, onChange, tipoPessoa }: ContatosMana
     }
   };
 
-  const atualizarContato = (index: number, campo: keyof ContatoFormData, valor: string) => {
+  const atualizarContato = (index: number, campo: keyof ContatoFormData, valor: string | boolean) => {
     const contato = contatos[index];
 
     // Para PJ, não permitir alterar o tipo dos contatos obrigatórios
@@ -102,6 +104,14 @@ export function ContatosManager({ contatos, onChange, tipoPessoa }: ContatosMana
 
     const novosContatos = [...contatos];
     novosContatos[index] = { ...novosContatos[index], [campo]: valor };
+    onChange(novosContatos);
+  };
+
+  const marcarContatoPrincipal = (index: number) => {
+    const novosContatos = contatos.map((contato, i) => ({
+      ...contato,
+      contato_principal_asaas: i === index
+    }));
     onChange(novosContatos);
   };
 
@@ -188,6 +198,33 @@ export function ContatosManager({ contatos, onChange, tipoPessoa }: ContatosMana
                     </Button>
                   )}
                 </div>
+
+                {/* Checkbox Contato Principal Asaas - Apenas para Comercial e Financeiro */}
+                {tipoPessoa === 'juridica' && (contato.tipo_contato === 'comercial' || contato.tipo_contato === 'financeiro') && (
+                  <div className="flex items-center space-x-2 p-3 bg-blue-50 dark:bg-blue-950 rounded border border-blue-200 dark:border-blue-800">
+                    <Checkbox
+                      id={`contato-principal-${index}`}
+                      checked={contato.contato_principal_asaas || false}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          marcarContatoPrincipal(index);
+                        }
+                      }}
+                    />
+                    <div className="flex-1">
+                      <label
+                        htmlFor={`contato-principal-${index}`}
+                        className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex items-center gap-1"
+                      >
+                        <Star className="h-3 w-3 text-blue-600" />
+                        Contato Principal no Asaas
+                      </label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Dados deste contato serão usados como email, celular e telefone principal no Asaas. O email do outro contato irá para "Emails Adicionais".
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Campos do formulário */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

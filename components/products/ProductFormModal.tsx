@@ -34,7 +34,9 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs';
-import { Trash2, Package, Save, X, Info, List, DollarSign, Ruler, Factory, ShoppingBag, Calculator } from 'lucide-react';
+import { Trash2, Package, Save, X, Info, List, DollarSign, Ruler, Factory, ShoppingBag, Calculator, Receipt } from 'lucide-react';
+import { NCMInput } from '@/components/ui/ncm-input';
+import { TributacaoSection } from '@/components/produtos/TributacaoSection';
 
 interface ProductFormModalProps {
   isOpen: boolean;
@@ -58,32 +60,75 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
 
   const [formData, setFormData] = useState<any>({
     tipo: 'fabricado',
-    unidade_venda: 'metro',
+    unidade_venda: 'unidade', // 80% dos produtos usam unidade
     permite_medida_composta: false,
-    receita: []
+    receita: [],
+    // Valores padrão tributários (baseados em análise real dos dados)
+    ncm: '48195000', // NCM padrão: papel ondulado (80% dos produtos)
+    origem_mercadoria: 0, // Nacional
+    cfop: '5102', // Venda dentro do estado
+    cst_icms: '102', // Simples Nacional sem crédito
+    modalidade_bc_icms: 0,
+    aliquota_icms: 0,
+    reducao_bc_icms: 0,
+    cst_ipi: '99', // Outras saídas
+    codigo_enquadramento_ipi: '999',
+    aliquota_ipi: 0,
+    cst_pis: '99', // Outras operações
+    aliquota_pis: 0,
+    cst_cofins: '99', // Outras operações
+    aliquota_cofins: 0,
   });
 
   useEffect(() => {
     if (product) {
-      setFormData({
-        ...product,
-        receita: product.receitas?.map((r: any) => ({
+      // Recalcular custos com valores ATUAIS das matérias-primas
+      const receitasRecalculadas = product.receitas?.map((r: any) => {
+        // Buscar o custo atual da matéria-prima
+        const materiaPrima = materiasPrimas.find(mp => mp.id === r.materia_prima_id);
+        const custoPorUnidade = materiaPrima ? Number(materiaPrima.custo_por_unidade) || 0 : 0;
+        const consumoPorMetroG = Number(r.consumo_por_metro_g) || 0;
+
+        // Recalcular custo_por_metro com o custo atual da matéria-prima
+        const custoRecalculado = (consumoPorMetroG / 1000) * custoPorUnidade;
+
+        return {
           id: r.id,
           materia_prima_id: r.materia_prima_id,
           numero_camadas: r.numero_camadas,
-          consumo_por_metro_g: Number(r.consumo_por_metro_g),
-          custo_por_metro: Number(r.custo_por_metro || 0)
-        })) || []
+          consumo_por_metro_g: consumoPorMetroG,
+          custo_por_metro: custoRecalculado
+        };
+      }) || [];
+
+      setFormData({
+        ...product,
+        receita: receitasRecalculadas
       });
     } else {
       setFormData({
         tipo: 'fabricado',
-        unidade_venda: 'metro',
+        unidade_venda: 'unidade', // 80% dos produtos usam unidade
         permite_medida_composta: false,
-        receita: []
+        receita: [],
+        // Valores padrão tributários (baseados em análise real dos dados)
+        ncm: '48195000', // NCM padrão: papel ondulado (80% dos produtos)
+        origem_mercadoria: 0, // Nacional
+        cfop: '5102', // Venda dentro do estado
+        cst_icms: '102', // Simples Nacional sem crédito
+        modalidade_bc_icms: 0,
+        aliquota_icms: 0,
+        reducao_bc_icms: 0,
+        cst_ipi: '99', // Outras saídas
+        codigo_enquadramento_ipi: '999',
+        aliquota_ipi: 0,
+        cst_pis: '99', // Outras operações
+        aliquota_pis: 0,
+        cst_cofins: '99', // Outras operações
+        aliquota_cofins: 0,
       });
     }
-  }, [product, isOpen]);
+  }, [product, isOpen, materiasPrimas]);
 
   const handleChange = (name: string, value: any, type?: string) => {
     if (name === 'tipo') {
@@ -169,6 +214,57 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    // ============================================
+    // VALIDAÇÃO TRIBUTÁRIA OBRIGATÓRIA (NF-e)
+    // ============================================
+    const errosTributarios: string[] = [];
+
+    // NCM obrigatório (8 dígitos)
+    if (!formData.ncm || formData.ncm.replace(/[.\s-]/g, '').length !== 8) {
+      errosTributarios.push('NCM é obrigatório e deve ter 8 dígitos');
+    }
+
+    // CFOP obrigatório (4 dígitos)
+    if (!formData.cfop || formData.cfop.length !== 4) {
+      errosTributarios.push('CFOP é obrigatório (ex: 5102, 6102)');
+    }
+
+    // Origem obrigatória
+    if (formData.origem_mercadoria === undefined || formData.origem_mercadoria === null) {
+      errosTributarios.push('Origem da mercadoria é obrigatória');
+    }
+
+    // CST ICMS obrigatório (3 dígitos)
+    if (!formData.cst_icms || formData.cst_icms.length !== 3) {
+      errosTributarios.push('CST ICMS é obrigatório (ex: 102, 000)');
+    }
+
+    // CST PIS obrigatório (2 dígitos)
+    if (!formData.cst_pis || formData.cst_pis.length !== 2) {
+      errosTributarios.push('CST PIS é obrigatório (ex: 01, 99)');
+    }
+
+    // CST COFINS obrigatório (2 dígitos)
+    if (!formData.cst_cofins || formData.cst_cofins.length !== 2) {
+      errosTributarios.push('CST COFINS é obrigatório (ex: 01, 99)');
+    }
+
+    // Se houver erros, mostrar e NÃO salvar
+    if (errosTributarios.length > 0) {
+      const mensagemErro = [
+        '⚠️ CAMPOS TRIBUTÁRIOS OBRIGATÓRIOS NÃO PREENCHIDOS:',
+        '',
+        ...errosTributarios.map(e => `• ${e}`),
+        '',
+        '❌ Este produto NÃO poderá ser usado em NF-e sem estes dados!',
+        '',
+        'Por favor, preencha a aba "Tributação" antes de salvar.',
+      ].join('\n');
+
+      alert(mensagemErro);
+      return; // NÃO SALVA
+    }
+
     const { receita, ...productData } = formData;
 
     const produtoParaSalvar: any = {
@@ -225,7 +321,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           <Tabs defaultValue="info" className="flex-1 flex flex-col min-h-0">
-            <TabsList className="grid w-full" style={{ gridTemplateColumns: formData.tipo === 'fabricado' ? '1fr 1fr' : '1fr' }}>
+            <TabsList className="grid w-full" style={{ gridTemplateColumns: formData.tipo === 'fabricado' ? '1fr 1fr 1fr' : '1fr 1fr' }}>
               <TabsTrigger value="info" className="gap-2">
                 <Info className="h-4 w-4" />
                 Informações Básicas
@@ -236,6 +332,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
                   Composição/Receita
                 </TabsTrigger>
               )}
+              <TabsTrigger value="tributacao" className="gap-2">
+                <Receipt className="h-4 w-4" />
+                Tributação
+              </TabsTrigger>
             </TabsList>
 
             <div className="flex-1 overflow-y-auto pr-2 mt-4 min-h-0">
@@ -293,9 +393,9 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
                       <Input
                         id="nome"
                         value={formData.nome || ''}
-                        onChange={(e) => handleChange('nome', e.target.value)}
+                        onChange={(e) => handleChange('nome', e.target.value.toUpperCase())}
                         required
-                        className="h-10"
+                        className="h-10 uppercase"
                       />
                     </div>
                     <div className="space-y-2">
@@ -316,6 +416,35 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="codigo_interno" className="text-sm font-medium">
+                        Código Interno
+                      </Label>
+                      <Input
+                        id="codigo_interno"
+                        value={formData.codigo_interno || ''}
+                        onChange={(e) => handleChange('codigo_interno', e.target.value)}
+                        className="h-10"
+                        placeholder="Código do produto"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="ncm" className="text-sm font-medium">
+                        NCM (Código Fiscal) <span className="text-orange-600">⚠️</span>
+                      </Label>
+                      <NCMInput
+                        id="ncm"
+                        value={formData.ncm || ''}
+                        onChange={(value) => handleChange('ncm', value)}
+                        className="h-10"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Necessário para emissão de Nota Fiscal
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -474,6 +603,77 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
                       </Select>
                     </div>
                   </div>
+
+                  {/* Resumo de Custos - Produto Fabricado */}
+                  {formData.tipo === 'fabricado' && (
+                    <Card className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Calculator className="h-4 w-4 text-blue-600" />
+                        <span className="text-sm font-semibold text-blue-900">Resumo de Custos</span>
+                      </div>
+
+                      {formData.receita?.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-blue-800">Custo de Fabricação:</span>
+                            <span className="font-mono font-semibold text-blue-900">{formatCurrency(custoTotalFabricacao)}/m</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-blue-800">Preço de Venda:</span>
+                            <span className="font-mono font-semibold text-blue-900">{formatCurrency(precoVenda)}/m</span>
+                          </div>
+                          <Separator className="bg-blue-200" />
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-semibold text-blue-800">Margem de Lucro:</span>
+                            <span className={`font-mono font-bold text-lg ${margemReal < 0 ? 'text-red-600' : margemReal < 20 ? 'text-amber-600' : 'text-green-600'}`}>
+                              {formatNumber(margemReal)}%
+                            </span>
+                          </div>
+                          <p className="text-xs text-blue-600 mt-2">
+                            Baseado em {formData.receita.length} {formData.receita.length === 1 ? 'matéria-prima' : 'matérias-primas'} na composição
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-blue-600 italic">
+                          Adicione matérias-primas na aba "Composição" para calcular o custo
+                        </p>
+                      )}
+                    </Card>
+                  )}
+
+                  {/* Resumo de Custos - Produto Revenda */}
+                  {formData.tipo === 'revenda' && formData.custo_compra > 0 && (
+                    <Card className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-green-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Calculator className="h-4 w-4 text-green-600" />
+                        <span className="text-sm font-semibold text-green-900">Resumo de Custos</span>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-green-800">Custo de Compra:</span>
+                          <span className="font-mono font-semibold text-green-900">{formatCurrency(formData.custo_compra || 0)}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-green-800">Preço de Venda:</span>
+                          <span className="font-mono font-semibold text-green-900">{formatCurrency(precoVenda)}</span>
+                        </div>
+                        <Separator className="bg-green-200" />
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-semibold text-green-800">Margem de Lucro:</span>
+                          {(() => {
+                            const margemRevenda = formData.custo_compra > 0
+                              ? ((precoVenda - formData.custo_compra) / formData.custo_compra) * 100
+                              : 0;
+                            return (
+                              <span className={`font-mono font-bold text-lg ${margemRevenda < 0 ? 'text-red-600' : margemRevenda < 20 ? 'text-amber-600' : 'text-green-600'}`}>
+                                {formatNumber(margemRevenda)}%
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </Card>
+                  )}
                 </div>
               </TabsContent>
 
@@ -573,40 +773,15 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product }: P
                           </p>
                         )}
                       </div>
-
-                      <Separator />
-
-                      {/* Resumo de Custos */}
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-                          <Calculator className="h-4 w-4" />
-                          <span>Resumo de Custos</span>
-                        </div>
-                        <Alert className="bg-blue-50 border-blue-200">
-                          <Calculator className="h-4 w-4 text-blue-600" />
-                          <AlertDescription className="ml-6">
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="font-semibold text-blue-900">Custo Total de Fabricação:</span>
-                              <span className="font-mono text-blue-700">{formatCurrency(custoTotalFabricacao)} /m</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span className="font-semibold text-blue-900">Margem de Lucro:</span>
-                              <span className={`font-mono ${margemReal < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                {formatNumber(margemReal)}%
-                              </span>
-                            </div>
-                            {formData.receita?.length > 0 && (
-                              <div className="text-xs text-blue-600 mt-2 pt-2 border-t border-blue-200">
-                                Baseado em {formData.receita.length} {formData.receita.length === 1 ? 'matéria-prima' : 'matérias-primas'}
-                              </div>
-                            )}
-                          </AlertDescription>
-                        </Alert>
-                      </div>
                     </>
                   )}
                 </TabsContent>
               )}
+
+              {/* Aba de Tributação */}
+              <TabsContent value="tributacao" className="space-y-6 mt-0">
+                <TributacaoSection formData={formData} onChange={handleChange} />
+              </TabsContent>
             </div>
           </Tabs>
 

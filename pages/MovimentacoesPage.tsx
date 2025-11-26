@@ -31,15 +31,21 @@ import {
 } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { Plus, RefreshCw, Trash2, AlertTriangle, TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { MovimentacoesFilter, applyFilters, type FilterState } from '@/components/movimentacoes/MovimentacoesFilter';
 
 export default function MovimentacoesPage() {
   const { movimentacoes, loading, error, refresh, create, delete: deleteMov } = useMovimentacoesEstoque();
   const { produtos } = useProdutos();
   const { materiasPrimas } = useMateriasPrimas();
-  const [filterTipo, setFilterTipo] = useState<string>('todos');
-  const [filterTipoItem, setFilterTipoItem] = useState<string>('todos');
-  const [filterMotivo, setFilterMotivo] = useState<string>('todos');
-  const [searchTerm, setSearchTerm] = useState<string>('');
+
+  // Filter state
+  const [filters, setFilters] = useState<FilterState>({
+    search: '',
+    tipo: 'todos',
+    tipo_item: 'todos',
+    motivo: 'todos',
+  });
+
   const [showModal, setShowModal] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -55,28 +61,6 @@ export default function MovimentacoesPage() {
     observacoes: '',
   });
 
-  const filteredMovimentacoes = useMemo(() => {
-    const getItemNomeMemo = (itemId: string, tipoItem: string) => {
-      if (tipoItem === 'materia_prima') {
-        const item = materiasPrimas.find(mp => mp.id === itemId);
-        return item?.nome || 'Item não encontrado';
-      } else {
-        const item = produtos.find(p => p.id === itemId);
-        return item?.nome || 'Item não encontrado';
-      }
-    };
-
-    return movimentacoes
-      .filter(m => filterTipo === 'todos' || m.tipo === filterTipo)
-      .filter(m => filterTipoItem === 'todos' || m.tipo_item === filterTipoItem)
-      .filter(m => filterMotivo === 'todos' || m.motivo === filterMotivo)
-      .filter(m => {
-        if (!searchTerm) return true;
-        const itemNome = getItemNomeMemo(m.item_id, m.tipo_item);
-        return itemNome?.toLowerCase().includes(searchTerm.toLowerCase()) || false;
-      });
-  }, [movimentacoes, filterTipo, filterTipoItem, filterMotivo, searchTerm, materiasPrimas, produtos]);
-
   const getItemNome = (itemId: string, tipoItem: string) => {
     if (tipoItem === 'materia_prima') {
       const item = materiasPrimas.find(mp => mp.id === itemId);
@@ -86,6 +70,10 @@ export default function MovimentacoesPage() {
       return item?.nome || 'Item não encontrado';
     }
   };
+
+  const filteredMovimentacoes = useMemo(() => {
+    return applyFilters(movimentacoes, filters, getItemNome);
+  }, [movimentacoes, filters, materiasPrimas, produtos]);
 
   const getItemUnidade = (itemId: string, tipoItem: string) => {
     if (tipoItem === 'materia_prima') {
@@ -304,64 +292,12 @@ export default function MovimentacoesPage() {
         </Button>
       </PageHeader>
 
-      <Card className="p-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="search">Buscar Item</Label>
-            <Input
-              id="search"
-              type="text"
-              placeholder="Digite o nome do item..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="filterTipo">Filtrar por Tipo</Label>
-            <Select value={filterTipo} onValueChange={setFilterTipo}>
-              <SelectTrigger id="filterTipo">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos os Tipos</SelectItem>
-                <SelectItem value="entrada">Entrada</SelectItem>
-                <SelectItem value="saida">Saída</SelectItem>
-                <SelectItem value="ajuste">Ajuste</SelectItem>
-                <SelectItem value="producao">Produção</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="filterTipoItem">Filtrar por Item</Label>
-            <Select value={filterTipoItem} onValueChange={setFilterTipoItem}>
-              <SelectTrigger id="filterTipoItem">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos os Itens</SelectItem>
-                <SelectItem value="materia_prima">Matérias-Primas</SelectItem>
-                <SelectItem value="produto_revenda">Produtos Revenda</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="filterMotivo">Filtrar por Motivo</Label>
-            <Select value={filterMotivo} onValueChange={setFilterMotivo}>
-              <SelectTrigger id="filterMotivo">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos os Motivos</SelectItem>
-                <SelectItem value="compra">Compra</SelectItem>
-                <SelectItem value="venda">Venda</SelectItem>
-                <SelectItem value="producao">Produção</SelectItem>
-                <SelectItem value="ajuste_inventario">Ajuste de Inventário</SelectItem>
-                <SelectItem value="devolucao">Devolução</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </Card>
+      {/* Filters */}
+      <MovimentacoesFilter
+        filters={filters}
+        onFiltersChange={setFilters}
+        movimentacoes={movimentacoes}
+      />
 
       <Card>
         <div className="overflow-x-auto">

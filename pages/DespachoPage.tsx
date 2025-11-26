@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import { usePedidos } from '../hooks/usePedidos';
+import { useNFe, type NFePaymentData } from '../hooks/useNFe';
+import { baseClient } from '../lib/base';
 import type { PedidoCompleto } from '../lib/database.types';
 import { formatCurrency } from '../lib/format';
 import { gerarPDFPedido } from '../lib/pdf-generator';
@@ -9,13 +11,27 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, Truck, Package, Printer } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { RefreshCw, AlertTriangle, Truck, Package, Printer, FileText, CheckCircle2, Download, ExternalLink, ChevronDown } from 'lucide-react';
 import { DespachoFilter, applyDespachoFilters, type DespachoFilterState } from '@/components/despacho/DespachoFilter';
+import { NFePaymentModal } from '@/components/despacho/NFePaymentModal';
 
 export default function DespachoPage() {
   const { pedidos, update, refresh, loading, error } = usePedidos();
+  const { emitirNFe, loading: emitindoNFe } = useNFe();
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<string | null>(null);
+  const [emitindoNFeId, setEmitindoNFeId] = useState<string | null>(null);
+
+  // Modal NF-e state
+  const [nfeModalOpen, setNfeModalOpen] = useState(false);
+  const [pedidoParaNFe, setPedidoParaNFe] = useState<PedidoCompleto | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   // Filter state
   const [filters, setFilters] = useState<DespachoFilterState>({
@@ -73,6 +89,137 @@ export default function DespachoPage() {
       toast.error('Erro ao gerar PDF. Tente novamente.');
     } finally {
       setPrintingId(null);
+    }
+  };
+
+  // Verifica se pedido tem dados de pagamento completos
+  const pedidoTemDadosPagamento = (pedido: PedidoCompleto): boolean => {
+    // banco_id pode ser 0, então verificar se não é null/undefined
+    return !!(pedido.tipo_cobranca && pedido.banco_id != null && pedido.banco_id > 0 && pedido.data_vencimento);
+  };
+
+  // Abre o modal ou emite diretamente se já tiver dados
+  const handleAbrirModalNFe = async (pedido: PedidoCompleto) => {
+    // Se já tem dados de pagamento, emitir diretamente
+    if (pedidoTemDadosPagamento(pedido)) {
+      setEmitindoNFeId(pedido.id);
+      try {
+        const result = await emitirNFe(pedido);
+        if (result.success) {
+          toast.success(
+            <div>
+              <strong>NF-e emitida com sucesso!</strong>
+              {result.invoiceNumber && (
+                <p className="text-sm mt-1">Número: {result.invoiceNumber}</p>
+              )}
+            </div>
+          );
+          refresh();
+        } else {
+          toast.error(`Erro ao emitir NF-e: ${result.error}`);
+        }
+      } catch (error: any) {
+        console.error('Erro ao emitir NF-e:', error);
+        toast.error(`Erro ao emitir NF-e: ${error.message || 'Erro desconhecido'}`);
+      } finally {
+        setEmitindoNFeId(null);
+      }
+    } else {
+      // Se não tem dados, abrir modal para preencher
+      setPedidoParaNFe(pedido);
+      setNfeModalOpen(true);
+    }
+  };
+
+  // Emite NF-e após confirmação do modal
+  const handleConfirmarNFe = async (paymentData: NFePaymentData) => {
+    if (!pedidoParaNFe) return;
+
+    setEmitindoNFeId(pedidoParaNFe.id);
+
+    try {
+      const result = await emitirNFe(pedidoParaNFe, paymentData);
+
+      if (result.success) {
+        toast.success(
+          <div>
+            <strong>NF-e emitida com sucesso!</strong>
+            {result.invoiceNumber && (
+              <p className="text-sm mt-1">Número: {result.invoiceNumber}</p>
+            )}
+          </div>
+        );
+        setNfeModalOpen(false);
+        setPedidoParaNFe(null);
+        refresh();
+      } else {
+        toast.error(`Erro ao emitir NF-e: ${result.error}`);
+      }
+    } catch (error: any) {
+      console.error('Erro ao emitir NF-e:', error);
+      toast.error(`Erro ao emitir NF-e: ${error.message || 'Erro desconhecido'}`);
+    } finally {
+      setEmitindoNFeId(null);
+    }
+  };
+
+  // Função auxiliar para download de arquivo base64
+  const downloadBase64File = (base64: string, fileName: string, contentType: string) => {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: contentType });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Download PDF da NF-e
+  const handleDownloadPdf = async (pedido: PedidoCompleto) => {
+    if (!pedido.base_invoice_id) {
+      toast.error('Pedido não possui NF-e emitida');
+      return;
+    }
+
+    setDownloadingId(pedido.id);
+    try {
+      const result = await baseClient.downloadInvoicePdf(String(pedido.base_invoice_id));
+      downloadBase64File(result.base64, `nfe-${pedido.base_invoice_number || pedido.numero_pedido}.pdf`, 'application/pdf');
+      toast.success('PDF baixado com sucesso!');
+    } catch (error: any) {
+      console.error('Erro ao baixar PDF:', error);
+      toast.error(`Erro ao baixar PDF: ${error.message}`);
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  // Download XML da NF-e
+  const handleDownloadXml = async (pedido: PedidoCompleto) => {
+    if (!pedido.base_invoice_id) {
+      toast.error('Pedido não possui NF-e emitida');
+      return;
+    }
+
+    setDownloadingId(pedido.id);
+    try {
+      const result = await baseClient.downloadInvoiceXml(String(pedido.base_invoice_id));
+      downloadBase64File(result.base64, `nfe-${pedido.base_invoice_number || pedido.numero_pedido}.xml`, 'application/xml');
+      toast.success('XML baixado com sucesso!');
+    } catch (error: any) {
+      console.error('Erro ao baixar XML:', error);
+      toast.error(`Erro ao baixar XML: ${error.message}`);
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -187,10 +334,72 @@ export default function DespachoPage() {
                             )}
                           </Button>
                           {jaEntregue ? (
-                            <Badge variant="success" className="gap-1">
-                              <Package className="h-3 w-3" />
-                              Despachado
-                            </Badge>
+                            <>
+                              {pedido.base_invoice_number ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="gap-1 border-green-300 text-green-700 hover:bg-green-50"
+                                      disabled={downloadingId === pedido.id}
+                                    >
+                                      {downloadingId === pedido.id ? (
+                                        <LoadingSpinner size="sm" />
+                                      ) : (
+                                        <CheckCircle2 className="h-3 w-3" />
+                                      )}
+                                      NF-e {pedido.base_invoice_number}
+                                      <ChevronDown className="h-3 w-3 ml-1" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={() => handleDownloadPdf(pedido)}
+                                      disabled={downloadingId === pedido.id}
+                                    >
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Download PDF
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleDownloadXml(pedido)}
+                                      disabled={downloadingId === pedido.id}
+                                    >
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Download XML
+                                    </DropdownMenuItem>
+                                    {pedido.base_invoice_key && (
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          // Consultar no portal SEFAZ
+                                          window.open(`https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=completa&tipoConteudo=XbSeqxE8pl8=&nfe=${pedido.base_invoice_key}`, '_blank');
+                                        }}
+                                      >
+                                        <ExternalLink className="h-4 w-4 mr-2" />
+                                        Consultar SEFAZ
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : (
+                                <Button
+                                  onClick={() => handleAbrirModalNFe(pedido)}
+                                  disabled={emitindoNFeId === pedido.id}
+                                  size="sm"
+                                  variant="default"
+                                  className="gap-2 bg-blue-600 hover:bg-blue-700"
+                                >
+                                  {emitindoNFeId === pedido.id ? (
+                                    <LoadingSpinner size="sm" />
+                                  ) : (
+                                    <>
+                                      <FileText className="h-4 w-4" />
+                                      Gerar NF-e
+                                    </>
+                                  )}
+                                </Button>
+                              )}
+                            </>
                           ) : (
                             <Button
                               onClick={() => handleDespachar(pedido)}
@@ -218,6 +427,18 @@ export default function DespachoPage() {
           </table>
         </div>
       </Card>
+
+      {/* Modal de Pagamento para NF-e */}
+      <NFePaymentModal
+        isOpen={nfeModalOpen}
+        onClose={() => {
+          setNfeModalOpen(false);
+          setPedidoParaNFe(null);
+        }}
+        onConfirm={handleConfirmarNFe}
+        pedido={pedidoParaNFe}
+        loading={emitindoNFeId !== null}
+      />
     </div>
   );
 }

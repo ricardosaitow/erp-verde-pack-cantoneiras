@@ -34,6 +34,14 @@ export interface Fornecedor {
   updated_at: string;
 }
 
+export interface HistoricoCusto {
+  data: string;
+  custo_anterior: number;
+  custo_novo: number;
+  usuario?: string;
+  motivo?: string;
+}
+
 export interface MateriaPrima {
   id: string;
   nome: string;
@@ -45,7 +53,9 @@ export interface MateriaPrima {
   estoque_atual: number;
   estoque_minimo: number;
   estoque_ponto_reposicao: number;
-  custo_por_unidade: number;
+  custo_por_unidade: number; // CUSTO ADMINISTRATIVO - decisão de gestão
+  ultimo_custo_real?: number; // Último custo real pago (informativo)
+  historico_custos?: HistoricoCusto[]; // Histórico de alterações no custo administrativo
   fornecedor_id?: string;
   local_armazenamento?: string;
   ativo: boolean;
@@ -60,18 +70,43 @@ export interface Produto {
   descricao?: string;
   categoria_id?: string;
   tipo: 'fabricado' | 'revenda';
-  
+
+  // Fiscal/Tributário
+  ncm?: string; // Código NCM (8 dígitos) - necessário para NF-e
+  origem_mercadoria?: number; // 0-Nacional, 1-Estrangeira importação direta, etc
+  cfop?: string; // Código Fiscal de Operações (4 dígitos: 5102, 6102, etc)
+  cest?: string; // Código Especificador da Substituição Tributária (7 dígitos)
+
+  // ICMS
+  cst_icms?: string; // Código de Situação Tributária do ICMS (3 dígitos)
+  modalidade_bc_icms?: number; // 0-MVA, 1-Pauta, 2-Preço Tabelado, 3-Valor da operação
+  aliquota_icms?: number; // Alíquota do ICMS (%)
+  reducao_bc_icms?: number; // Redução da BC do ICMS (%)
+
+  // IPI
+  cst_ipi?: string; // Código de Situação Tributária do IPI (2 dígitos)
+  codigo_enquadramento_ipi?: string; // Código de enquadramento legal do IPI (3 dígitos)
+  aliquota_ipi?: number; // Alíquota do IPI (%)
+
+  // PIS
+  cst_pis?: string; // Código de Situação Tributária do PIS (2 dígitos)
+  aliquota_pis?: number; // Alíquota do PIS (%)
+
+  // COFINS
+  cst_cofins?: string; // Código de Situação Tributária do COFINS (2 dígitos)
+  aliquota_cofins?: number; // Alíquota do COFINS (%)
+
   // Dimensões (em mm)
   altura_mm?: number;
   largura_mm?: number;
   espessura_mm?: number;
-  
+
   // Venda
   unidade_venda: string;
   permite_medida_composta: boolean;
   preco_venda_unitario: number;
   margem_lucro_percentual?: number;
-  
+
   // Específico para REVENDA
   estoque_atual?: number;
   estoque_minimo?: number;
@@ -82,12 +117,17 @@ export interface Produto {
   lote_minimo_compra?: number;
   prazo_entrega_dias?: number;
   local_armazenamento?: string;
-  
+
   // Específico para FABRICADO
   tempo_producao_metros_hora?: number;
   lead_time_dias?: number;
   instrucoes_tecnicas?: string;
-  
+
+  // Sincronização com Base ERP
+  base_id?: number; // ID do produto no Base ERP
+  sincronizado?: boolean; // Produto sincronizado com Base?
+  data_sincronizacao?: string; // Data da última sincronização
+
   ativo: boolean;
   created_at: string;
   updated_at: string;
@@ -112,10 +152,15 @@ export interface Cliente {
   nome_fantasia?: string;
   cnpj_cpf?: string;
   inscricao_estadual?: string;
+  inscricao_municipal?: string;
   email?: string;
   telefone?: string;
   celular?: string;
   endereco_completo?: string;
+  endereco?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
   cep?: string;
   cidade?: string;
   estado?: string;
@@ -123,6 +168,9 @@ export interface Cliente {
   condicoes_pagamento?: string;
   limite_credito?: number;
   observacoes?: string;
+  group_name?: string;
+  asaas_customer_id?: string;
+  base_customer_id?: string;
   ativo: boolean;
   created_at: string;
   updated_at: string;
@@ -148,22 +196,46 @@ export interface Pedido {
   data_pedido: string;
   tipo: 'orcamento' | 'pedido_confirmado';
   status: 'pendente' | 'aprovado' | 'producao' | 'finalizado' | 'aguardando_despacho' | 'entregue' | 'cancelado' | 'recusado';
-  
+
   valor_produtos: number;
   valor_frete: number;
   valor_desconto: number;
   valor_total: number;
-  
+
   prazo_entrega_dias?: number;
   data_entrega_prevista?: string;
   data_entrega_realizada?: string;
-  
+
   forma_pagamento?: string;
   condicoes_pagamento?: string;
   observacoes?: string;
   observacoes_internas?: string;
-  
+
+  // Dados de Pagamento para NF-e
+  tipo_cobranca?: string; // BOLETO, PIX, CREDIT_CARD, etc.
+  banco_id?: number; // ID do banco no Base ERP
+  data_vencimento?: string; // Data de vencimento do pagamento
+
+  // Dados de Transporte
+  transportadora_id?: string; // ID da transportadora local
+  base_transportadora_id?: number; // ID da transportadora no Base ERP
+  tipo_frete?: string; // CIF, FOB, etc.
+
   vendedor_id?: string;
+
+  // Integração Base ERP
+  base_sales_order_id?: string;
+  base_invoice_id?: string; // ID da NF-e no Base ERP (para download PDF/XML)
+  base_invoice_number?: string;
+  base_invoice_key?: string;
+  data_emissao_nf?: string;
+  sincronizado_base?: boolean;
+  ultima_sincronizacao_base?: string;
+
+  // Integração Asaas
+  sincronizado_asaas?: boolean;
+  ultima_sincronizacao_asaas?: string;
+
   created_at: string;
   updated_at: string;
 }
@@ -259,6 +331,8 @@ export interface MovimentacaoEstoque {
   unidade: string;
   motivo: 'compra' | 'venda' | 'producao' | 'ajuste_inventario' | 'devolucao';
   documento_referencia?: string;
+  lote_id?: string;
+  custo_real_unitario?: number;
   observacoes?: string;
   usuario_id?: string;
   created_at: string;
@@ -311,4 +385,37 @@ export interface CompraCompleta extends Compra {
     materia_prima?: MateriaPrima;
     produto?: Produto;
   })[];
+}
+
+// ============================================
+// SISTEMA DE LOTES E CONTROLE PEPS
+// ============================================
+
+export interface LoteEstoque {
+  id: string;
+  materia_prima_id: string;
+  compra_item_id?: string;
+  data_entrada: string;
+  quantidade_inicial_kg: number;
+  quantidade_atual_kg: number;
+  custo_real_por_kg: number;
+  status: 'ativo' | 'esgotado';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoteEstoqueCompleto extends LoteEstoque {
+  materia_prima?: MateriaPrima;
+}
+
+export interface AlertaMudancaLote {
+  materia_prima_id: string;
+  materia_prima_nome: string;
+  lote_anterior_id: string;
+  lote_anterior_custo: number;
+  lote_novo_id: string;
+  lote_novo_custo: number;
+  custo_administrativo_atual: number;
+  diferenca_percentual: number;
+  estoque_restante_lote_novo: number;
 }

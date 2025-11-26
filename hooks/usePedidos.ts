@@ -1,15 +1,104 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Pedido, PedidoCompleto } from '../lib/database.types';
-import { darBaixaProdutoRevenda } from '../lib/estoque';
+import {
+  darBaixaProdutoRevenda,
+  simularProvisao,
+  reservarLotesParaPedido,
+  cancelarReservasPedido,
+  type ResultadoProvisao
+} from '../lib/estoque';
+import { calcularConsumoMaterial } from '../lib/calculos';
+
+// Locks globais para evitar criação duplicada de ordens de produção
+// Devem ficar fora do hook para persistir entre renderizações
+const pedidosEmProcessamento = new Set<string>();
+const itensComOrdemEmCriacao = new Set<string>(); // Lock por pedido_item_id
+
+// Função auxiliar para criar ordem de produção de forma segura (evita duplicação)
+async function criarOrdemProducaoSegura(
+  pedidoId: string,
+  pedidoItemId: string,
+  produtoId: string,
+  produtoNome: string,
+  totalMetros: number,
+  numeroPedido: string,
+  dataProgramada: string | null,
+  instrucoesTecnicas: string | null,
+  quantidadePecas: number | null = null,
+  comprimentoCadaMm: number | null = null
+): Promise<{ success: boolean; error?: string }> {
+  // Lock por item - se já está criando ordem para este item, ignorar
+  if (itensComOrdemEmCriacao.has(pedidoItemId)) {
+    console.warn(`⚠️ Ordem de produção já está sendo criada para item ${pedidoItemId}, ignorando`);
+    return { success: false, error: 'Já está criando ordem para este item' };
+  }
+
+  itensComOrdemEmCriacao.add(pedidoItemId);
+
+  try {
+    // Verificar IMEDIATAMENTE antes de criar se já existe ordem para este item
+    const { data: ordemExistente, error: checkError } = await supabase
+      .from('ordens_producao')
+      .select('id, numero_op')
+      .eq('pedido_item_id', pedidoItemId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error('Erro ao verificar ordem existente:', checkError);
+    }
+
+    if (ordemExistente) {
+      console.warn(`⚠️ Ordem de produção ${ordemExistente.numero_op} já existe para item ${pedidoItemId}, não criando duplicada`);
+      return { success: false, error: 'Ordem já existe' };
+    }
+
+    // Gerar número da ordem de produção
+    const { count: countOp } = await supabase
+      .from('ordens_producao')
+      .select('*', { count: 'exact', head: true });
+
+    const numeroOp = `OP-${String((countOp || 0) + 1).padStart(4, '0')}`;
+
+    // Criar ordem de produção
+    const { error: ordemError } = await supabase
+      .from('ordens_producao')
+      .insert([{
+        numero_op: numeroOp,
+        pedido_id: pedidoId,
+        pedido_item_id: pedidoItemId,
+        produto_id: produtoId,
+        quantidade_produzir_metros: totalMetros,
+        quantidade_pecas: quantidadePecas,
+        comprimento_cada_mm: comprimentoCadaMm,
+        status: 'aguardando',
+        data_programada: dataProgramada,
+        instrucoes_tecnicas: instrucoesTecnicas,
+        observacoes: `Gerada automaticamente do pedido ${numeroPedido}`,
+      }]);
+
+    if (ordemError) {
+      // Verificar se é erro de duplicação (constraint violation)
+      if (ordemError.code === '23505' || ordemError.message?.includes('duplicate') || ordemError.message?.includes('unique')) {
+        console.warn(`⚠️ Ordem de produção duplicada detectada pelo banco para item ${pedidoItemId}`);
+        return { success: false, error: 'Duplicação detectada pelo banco' };
+      }
+      console.error(`Erro ao criar ordem de produção para ${produtoNome}:`, ordemError);
+      return { success: false, error: ordemError.message };
+    }
+
+    console.log(`✅ Ordem de produção criada: ${numeroOp} para ${produtoNome} (${totalMetros}m)`);
+    return { success: true };
+  } finally {
+    // Sempre remover o lock no final
+    itensComOrdemEmCriacao.delete(pedidoItemId);
+  }
+}
 
 export function usePedidos() {
   const [pedidos, setPedidos] = useState<PedidoCompleto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Lock para evitar criação duplicada de ordens de produção
-  const pedidosEmProcessamento = new Set<string>();
 
   async function fetchPedidos() {
     try {
@@ -96,6 +185,13 @@ export function usePedidos() {
         observacoes: pedidoData.observacoes || null,
         observacoes_internas: pedidoData.observacoes_internas || null,
         vendedor_id: pedidoData.vendedor_id || null,
+        // Campos de pagamento para NF-e
+        tipo_cobranca: pedidoData.tipo_cobranca || null,
+        banco_id: pedidoData.banco_id ? Number(pedidoData.banco_id) : null,
+        data_vencimento: pedidoData.data_vencimento || null,
+        // Campos de transporte
+        transportadora_id: pedidoData.transportadora_id || null,
+        tipo_frete: pedidoData.tipo_frete || null,
       };
       
       // Criar pedido
@@ -170,9 +266,10 @@ export function usePedidos() {
 
           if (!itensComProdutosError && itensComProdutos) {
             // Processar cada item do pedido
+            // A verificação de duplicação é feita na função criarOrdemProducaoSegura
             for (const itemPedido of itensComProdutos) {
               const produto = itemPedido.produto as any;
-              
+
               if (!produto) continue;
 
               if (produto.tipo === 'revenda') {
@@ -197,18 +294,11 @@ export function usePedidos() {
                 }
               } else if (produto.tipo === 'fabricado') {
                 // Criar ordem de produção para produtos fabricados
-                const totalMetros = itemPedido.total_calculado 
-                  ? Number(itemPedido.total_calculado) 
+                const totalMetros = itemPedido.total_calculado
+                  ? Number(itemPedido.total_calculado)
                   : (itemPedido.quantidade_simples ? Number(itemPedido.quantidade_simples) : 0);
 
                 if (totalMetros > 0) {
-                  // Gerar número da ordem de produção
-                  const { count: countOp } = await supabase
-                    .from('ordens_producao')
-                    .select('*', { count: 'exact', head: true });
-                  
-                  const numeroOp = `OP-${String((countOp || 0) + 1).padStart(4, '0')}`;
-
                   // Calcular data programada (se houver prazo de entrega e data do pedido)
                   let dataProgramada: string | null = null;
                   if (pedidoParaInserir.prazo_entrega_dias && pedidoParaInserir.data_pedido) {
@@ -217,27 +307,19 @@ export function usePedidos() {
                     dataProgramada = dataPedido.toISOString().split('T')[0];
                   }
 
-                  // Criar ordem de produção
-                  const { error: ordemError } = await supabase
-                    .from('ordens_producao')
-                    .insert([{
-                      numero_op: numeroOp,
-                      pedido_id: pedidoCriado.id,
-                      pedido_item_id: itemPedido.id,
-                      produto_id: produto.id,
-                      quantidade_produzir_metros: totalMetros,
-                      status: 'aguardando',
-                      data_programada: dataProgramada,
-                      instrucoes_tecnicas: produto.instrucoes_tecnicas || null,
-                      observacoes: `Gerada automaticamente do pedido ${pedidoParaInserir.numero_pedido}`,
-                    }]);
-
-                  if (ordemError) {
-                    console.error(`Erro ao criar ordem de produção para ${produto.nome}:`, ordemError);
-                    console.warn(`Atenção: Ordem de produção não foi criada para ${produto.nome}`);
-                  } else {
-                    console.log(`✅ Ordem de produção criada: ${numeroOp} para ${produto.nome} (${totalMetros}m)`);
-                  }
+                  // Usar função segura que evita duplicação
+                  await criarOrdemProducaoSegura(
+                    pedidoCriado.id,
+                    itemPedido.id,
+                    produto.id,
+                    produto.nome,
+                    totalMetros,
+                    pedidoParaInserir.numero_pedido,
+                    dataProgramada,
+                    produto.instrucoes_tecnicas || null,
+                    itemPedido.quantidade_pecas ? Number(itemPedido.quantidade_pecas) : null,
+                    itemPedido.comprimento_cada_mm ? Number(itemPedido.comprimento_cada_mm) : null
+                  );
                 }
               }
             }
@@ -325,15 +407,8 @@ export function usePedidos() {
           .eq('pedido_id', id);
 
         if (!itensComProdutosError && itensComProdutos && numeroPedido) {
-          // Verificar se já existem ordens de produção para este pedido
-          const { data: ordensExistentes } = await supabase
-            .from('ordens_producao')
-            .select('pedido_item_id')
-            .eq('pedido_id', id);
-
-          const itensComOp = new Set(ordensExistentes?.map(op => op.pedido_item_id) || []);
-
           // Processar cada item do pedido
+          // A verificação de duplicação é feita na função criarOrdemProducaoSegura
           for (const itemPedido of itensComProdutos) {
             const produto = itemPedido.produto as any;
 
@@ -359,22 +434,15 @@ export function usePedidos() {
                   console.warn(`Atenção: Estoque do produto ${produto.nome} não foi atualizado`);
                 }
               }
-            } else if (produto.tipo === 'fabricado' && !itensComOp.has(itemPedido.id)) {
-              // Criar ordem de produção para produtos fabricados (se ainda não existe)
+            } else if (produto.tipo === 'fabricado') {
+              // Criar ordem de produção para produtos fabricados
               // Calcular total de metros: usar total_calculado se existir (venda composta),
               // senão usar quantidade_simples (venda simples por metro)
-              const totalMetros = itemPedido.total_calculado 
-                ? Number(itemPedido.total_calculado) 
+              const totalMetros = itemPedido.total_calculado
+                ? Number(itemPedido.total_calculado)
                 : (itemPedido.quantidade_simples ? Number(itemPedido.quantidade_simples) : 0);
 
               if (totalMetros > 0) {
-                // Gerar número da ordem de produção
-                const { count: countOp } = await supabase
-                  .from('ordens_producao')
-                  .select('*', { count: 'exact', head: true });
-                
-                const numeroOp = `OP-${String((countOp || 0) + 1).padStart(4, '0')}`;
-
                 // Calcular data programada (se houver prazo de entrega e data do pedido)
                 let dataProgramada: string | null = null;
                 const pedidoFinal = data || pedidoAtual;
@@ -386,27 +454,19 @@ export function usePedidos() {
                   dataProgramada = pedidoFinal.data_entrega_prevista.split('T')[0];
                 }
 
-                // Criar ordem de produção
-                const { error: ordemError } = await supabase
-                  .from('ordens_producao')
-                  .insert([{
-                    numero_op: numeroOp,
-                    pedido_id: id,
-                    pedido_item_id: itemPedido.id,
-                    produto_id: produto.id,
-                    quantidade_produzir_metros: totalMetros,
-                    status: 'aguardando',
-                    data_programada: dataProgramada,
-                    instrucoes_tecnicas: produto.instrucoes_tecnicas || null,
-                    observacoes: `Gerada automaticamente do pedido ${numeroPedido}`,
-                  }]);
-
-                if (ordemError) {
-                  console.error(`Erro ao criar ordem de produção para ${produto.nome}:`, ordemError);
-                  console.warn(`Atenção: Ordem de produção não foi criada para ${produto.nome}`);
-                } else {
-                  console.log(`✅ Ordem de produção criada: ${numeroOp} para ${produto.nome} (${totalMetros}m)`);
-                }
+                // Usar função segura que evita duplicação
+                await criarOrdemProducaoSegura(
+                  id,
+                  itemPedido.id,
+                  produto.id,
+                  produto.nome,
+                  totalMetros,
+                  numeroPedido,
+                  dataProgramada,
+                  produto.instrucoes_tecnicas || null,
+                  itemPedido.quantidade_pecas ? Number(itemPedido.quantidade_pecas) : null,
+                  itemPedido.comprimento_cada_mm ? Number(itemPedido.comprimento_cada_mm) : null
+                );
               }
             }
           }
@@ -443,6 +503,155 @@ export function usePedidos() {
     }
   }
 
+  /**
+   * Simula a provisao de material para um pedido
+   * Retorna alertas de estoque insuficiente e mudanca de custo
+   */
+  async function simularProvisaoPedido(pedidoId: string): Promise<{
+    provisao: ResultadoProvisao | null;
+    error: string | null;
+  }> {
+    try {
+      // Buscar itens do pedido com produtos e receitas
+      const { data: itens, error: itensError } = await supabase
+        .from('pedidos_itens')
+        .select(`
+          *,
+          produto:produtos(
+            *,
+            receitas(
+              *,
+              materia_prima:materias_primas(*)
+            )
+          )
+        `)
+        .eq('pedido_id', pedidoId);
+
+      if (itensError) {
+        return { provisao: null, error: itensError.message };
+      }
+
+      // Calcular materiais necessarios
+      const materiaisNecessarios: Array<{
+        materia_prima_id: string;
+        materia_prima_nome: string;
+        quantidade_kg: number;
+        custo_administrativo: number;
+      }> = [];
+
+      // Mapa para acumular quantidades por materia-prima
+      const mapaQuantidades: Record<string, {
+        materia_prima_id: string;
+        materia_prima_nome: string;
+        quantidade_kg: number;
+        custo_administrativo: number;
+      }> = {};
+
+      for (const item of itens || []) {
+        const produto = item.produto as any;
+        if (!produto || produto.tipo !== 'fabricado') continue;
+
+        // Calcular total de metros
+        const totalMetros = item.total_calculado
+          ? Number(item.total_calculado)
+          : (item.quantidade_simples ? Number(item.quantidade_simples) : 0);
+
+        if (totalMetros <= 0) continue;
+
+        // Processar cada receita do produto
+        const receitas = produto.receitas || [];
+        for (const receita of receitas) {
+          if (!receita.materia_prima) continue;
+
+          const consumoKg = calcularConsumoMaterial(totalMetros, receita.consumo_por_metro_g);
+          if (consumoKg <= 0) continue;
+
+          const mpId = receita.materia_prima_id;
+          if (mapaQuantidades[mpId]) {
+            mapaQuantidades[mpId].quantidade_kg += consumoKg;
+          } else {
+            mapaQuantidades[mpId] = {
+              materia_prima_id: mpId,
+              materia_prima_nome: receita.materia_prima.nome,
+              quantidade_kg: consumoKg,
+              custo_administrativo: receita.materia_prima.custo_por_unidade || 0,
+            };
+          }
+        }
+      }
+
+      // Converter mapa para array
+      for (const mp of Object.values(mapaQuantidades)) {
+        materiaisNecessarios.push(mp);
+      }
+
+      if (materiaisNecessarios.length === 0) {
+        return {
+          provisao: {
+            sucesso: true,
+            alertas: [],
+            reservas: [],
+            resumo: {
+              tem_estoque_suficiente: true,
+              tem_mudanca_custo: false,
+              materiais_faltantes: [],
+            },
+          },
+          error: null,
+        };
+      }
+
+      // Simular provisao
+      const provisao = await simularProvisao(materiaisNecessarios);
+
+      return { provisao, error: null };
+    } catch (err) {
+      return { provisao: null, error: err instanceof Error ? err.message : 'Erro ao simular provisao' };
+    }
+  }
+
+  /**
+   * Aprova pedido e reserva os lotes
+   */
+  async function aprovarPedidoComReserva(
+    pedidoId: string,
+    provisao: ResultadoProvisao
+  ): Promise<{ error: string | null }> {
+    try {
+      // Reservar lotes
+      if (provisao.reservas.length > 0) {
+        const { error: reservaError } = await reservarLotesParaPedido(
+          pedidoId,
+          null, // pedidoItemId - null para reservar para o pedido inteiro
+          provisao.reservas
+        );
+
+        if (reservaError) {
+          console.error('Erro ao reservar lotes:', reservaError);
+          // Nao bloquear aprovacao por erro de reserva
+        }
+      }
+
+      // Aprovar pedido (isso vai criar as ordens de producao)
+      // Atualiza tanto o status para 'aprovado' quanto o tipo para 'pedido_confirmado'
+      const { error } = await updatePedido(pedidoId, {
+        status: 'aprovado',
+        tipo: 'pedido_confirmado'
+      });
+
+      return { error };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Erro ao aprovar pedido' };
+    }
+  }
+
+  /**
+   * Cancela reservas de um pedido (quando cancela ou recusa)
+   */
+  async function cancelarReservas(pedidoId: string): Promise<{ error: string | null }> {
+    return await cancelarReservasPedido(pedidoId);
+  }
+
   return {
     pedidos,
     loading,
@@ -451,6 +660,9 @@ export function usePedidos() {
     create: createPedido,
     update: updatePedido,
     delete: deletePedido,
+    simularProvisaoPedido,
+    aprovarPedidoComReserva,
+    cancelarReservas,
   };
 }
 

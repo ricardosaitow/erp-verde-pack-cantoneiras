@@ -97,10 +97,11 @@ export function MateriaPrimaDetailModal({
                     <p className="font-medium">{materiaPrima.unidade_estoque}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Custo por Unidade</p>
+                    <p className="text-sm text-muted-foreground">Custo Atual (R$/{materiaPrima.unidade_estoque})</p>
                     <p className="font-medium text-lg text-purple-600">
                       {formatCurrency(Number(materiaPrima.custo_por_unidade) || 0)}
                     </p>
+                    <p className="text-xs text-muted-foreground">Baseado no lote em uso (PEPS)</p>
                   </div>
                   {materiaPrima.local_armazenamento && (
                     <div>

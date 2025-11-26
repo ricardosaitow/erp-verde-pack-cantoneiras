@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import { confirmAction } from '@/lib/toast-utils';
 import { useOrdensProducao } from '../hooks/useOrdensProducao';
-import type { OrdemProducao } from '../lib/database.types';
+import type { OrdemProducao, AlertaMudancaLote } from '../lib/database.types';
 import { formatQuantity } from '../lib/format';
 import { PageHeader, LoadingSpinner, EmptyState, StatusBadge } from '@/components/erp';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ import {
 import { Plus, RefreshCw, AlertTriangle, Factory, Play } from 'lucide-react';
 import { OrdensProducaoFilter, applyFilters, type FilterState } from '@/components/ordens-producao/OrdensProducaoFilter';
 import { OrdemProducaoDetailModal } from '@/components/ordens-producao/OrdemProducaoDetailModal';
+import { TrocaLoteModal } from '@/components/estoque/TrocaLoteModal';
 import { isTransitionAllowed, type OrdemProducaoStatus } from '@/lib/ordem-producao-workflow';
 
 export default function OrdensProducaoPage() {
@@ -37,6 +38,10 @@ export default function OrdensProducaoPage() {
 
   // Status updating state
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+
+  // Troca de lote modal state
+  const [showTrocaLoteModal, setShowTrocaLoteModal] = useState(false);
+  const [alertasTrocaLote, setAlertasTrocaLote] = useState<AlertaMudancaLote[]>([]);
 
   const filteredOrdens = useMemo(() => {
     return applyFilters(ordens, filters);
@@ -82,7 +87,7 @@ export default function OrdensProducaoPage() {
       onConfirm: async () => {
         setUpdatingStatus(ordem.id);
 
-        const { error: updateError } = await update(ordem.id, { status: 'em_producao' });
+        const { error: updateError, alertas } = await update(ordem.id, { status: 'em_producao' });
 
         setUpdatingStatus(null);
 
@@ -91,6 +96,12 @@ export default function OrdensProducaoPage() {
         } else {
           toast.success(`Produção iniciada! Baixa de estoque realizada para ordem ${ordem.numero_op}`);
           await refresh();
+
+          // Se há alertas de troca de lote (custo diferente), mostrar modal
+          if (alertas && alertas.length > 0) {
+            setAlertasTrocaLote(alertas);
+            setShowTrocaLoteModal(true);
+          }
         }
       }
     });
@@ -264,6 +275,19 @@ export default function OrdensProducaoPage() {
         }}
         onDelete={handleDelete}
         onUpdateStatus={handleUpdateStatus}
+      />
+
+      {/* Modal de Troca de Lote - quando lote esgota e próximo tem custo diferente */}
+      <TrocaLoteModal
+        open={showTrocaLoteModal}
+        onClose={() => {
+          setShowTrocaLoteModal(false);
+          setAlertasTrocaLote([]);
+        }}
+        alertas={alertasTrocaLote}
+        onComplete={() => {
+          refresh();
+        }}
       />
     </div>
   );

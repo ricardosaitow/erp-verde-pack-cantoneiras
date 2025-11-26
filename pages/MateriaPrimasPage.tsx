@@ -151,11 +151,12 @@ export default function MateriaPrimasPage() {
       gramatura: formData.gramatura ? Number(formData.gramatura) : null,
       largura_mm: formData.largura_mm ? Number(formData.largura_mm) : null,
       unidade_estoque: formData.unidade_estoque,
-      estoque_atual: Number(formData.estoque_atual),
-      estoque_minimo: Number(formData.estoque_minimo),
-      estoque_ponto_reposicao: Number(formData.estoque_ponto_reposicao),
-      custo_por_unidade: Number(formData.custo_por_unidade),
-      local_armazenamento: formData.local_armazenamento || null,
+      estoque_minimo: Number(formData.estoque_minimo) || 0,
+      estoque_ponto_reposicao: Number(formData.estoque_ponto_reposicao) || 0,
+      // Campos controlados automaticamente
+      estoque_atual: editingItem ? Number(formData.estoque_atual) : 0,
+      custo_por_unidade: editingItem ? Number(formData.custo_por_unidade) : 0,
+      local_armazenamento: editingItem ? (formData.local_armazenamento || null) : null,
       ativo: true,
     };
 
@@ -251,30 +252,13 @@ export default function MateriaPrimasPage() {
                   <TableHead className="min-w-[200px]">Nome</TableHead>
                   <TableHead className="min-w-[120px]">Tipo</TableHead>
                   <TableHead className="text-right min-w-[100px]">Gramatura</TableHead>
-                  <TableHead className="text-right min-w-[100px]">Largura</TableHead>
-                  <TableHead className="text-right min-w-[120px]">Peso/Metro</TableHead>
-                  <TableHead className="text-right min-w-[120px]">Estoque</TableHead>
-                  <TableHead className="text-right min-w-[120px]">Custo/Unid.</TableHead>
+                  <TableHead className="text-right min-w-[120px]">Estoque Mínimo</TableHead>
+                  <TableHead className="text-right min-w-[120px]">Custo Atual</TableHead>
                   <TableHead className="text-center min-w-[100px]">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredMateriasPrimas.map((item) => {
-                  const estoqueAtual = Number(item.estoque_atual) || 0;
-                  const estoqueMinimo = Number(item.estoque_minimo) || 0;
-                  const estoquePontoReposicao = Number(item.estoque_ponto_reposicao) || 0;
-
-                  let estoqueVariant: 'destructive' | 'warning' | 'success' = 'success';
-                  let estoqueLabel = 'Normal';
-                  if (estoqueAtual <= estoquePontoReposicao) {
-                    estoqueVariant = 'destructive';
-                    estoqueLabel = 'Crítico';
-                  } else if (estoqueAtual <= estoqueMinimo) {
-                    estoqueVariant = 'warning';
-                    estoqueLabel = 'Baixo';
-                  }
-
-                  return (
+                {filteredMateriasPrimas.map((item) => (
                     <TableRow
                       key={item.id}
                       onClick={() => handleRowClick(item)}
@@ -290,30 +274,18 @@ export default function MateriaPrimasPage() {
                         {item.gramatura ? `${item.gramatura} g/m²` : '-'}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
-                        {item.largura_mm ? `${item.largura_mm} mm` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        {item.peso_por_metro_g ? `${formatNumber(item.peso_por_metro_g, 1)} g/m` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {item.estoque_atual} {item.unidade_estoque}
+                        {formatNumber(item.estoque_minimo, 0)} {item.unidade_estoque}
                       </TableCell>
                       <TableCell className="text-right font-medium text-purple-600">
                         {formatCurrency(item.custo_por_unidade)}
                       </TableCell>
                       <TableCell className="text-center">
-                        <div className="flex flex-col items-center gap-1">
-                          <Badge variant={estoqueVariant} className="text-xs">
-                            {estoqueLabel}
-                          </Badge>
-                          <Badge variant={item.ativo ? 'success' : 'secondary'} className="text-xs">
-                            {item.ativo ? 'Ativo' : 'Inativo'}
-                          </Badge>
-                        </div>
+                        <Badge variant={item.ativo ? 'success' : 'secondary'} className="text-xs">
+                          {item.ativo ? 'Ativo' : 'Inativo'}
+                        </Badge>
                       </TableCell>
                     </TableRow>
-                  );
-                })}
+                ))}
               </TableBody>
             </Table>
           </div>
@@ -455,78 +427,27 @@ export default function MateriaPrimasPage() {
                 <span>Controle de Estoque</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="estoque_atual" className="text-sm font-medium">
-                    Estoque Atual <span className="text-destructive">*</span>
-                  </Label>
-                  <NumberInput
-                    id="estoque_atual"
-                    value={Number(formData.estoque_atual) || 0}
-                    onChange={(value) => setFormData({ ...formData, estoque_atual: value.toString() })}
-                    required
-                    className="h-10"
-                  />
-                </div>
-
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="estoque_minimo" className="text-sm font-medium">
-                    Estoque Mínimo <span className="text-destructive">*</span>
+                    Estoque Mínimo
                   </Label>
                   <NumberInput
                     id="estoque_minimo"
                     value={Number(formData.estoque_minimo) || 0}
                     onChange={(value) => setFormData({ ...formData, estoque_minimo: value.toString() })}
-                    required
                     className="h-10"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="estoque_ponto_reposicao" className="text-sm font-medium">
-                    Ponto Reposição <span className="text-destructive">*</span>
+                    Ponto de Reposição
                   </Label>
                   <NumberInput
                     id="estoque_ponto_reposicao"
                     value={Number(formData.estoque_ponto_reposicao) || 0}
                     onChange={(value) => setFormData({ ...formData, estoque_ponto_reposicao: value.toString() })}
-                    required
-                    className="h-10"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Custo e Localização */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-                <DollarSign className="h-4 w-4" />
-                <span>Custo e Localização</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="custo_por_unidade" className="text-sm font-medium">
-                    Custo por Unidade <span className="text-destructive">*</span>
-                  </Label>
-                  <CurrencyInput
-                    id="custo_por_unidade"
-                    value={Number(formData.custo_por_unidade) || 0}
-                    onChange={(value) => setFormData({ ...formData, custo_por_unidade: value.toString() })}
-                    required
-                    className="h-10"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="local_armazenamento" className="text-sm font-medium">Local de Armazenamento</Label>
-                  <Input
-                    id="local_armazenamento"
-                    value={formData.local_armazenamento}
-                    onChange={(e) => setFormData({ ...formData, local_armazenamento: e.target.value })}
-                    placeholder="Ex: Depósito A - Prateleira 2"
                     className="h-10"
                   />
                 </div>

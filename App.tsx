@@ -10,6 +10,7 @@ import ProductsPage from './pages/ProductsPage';
 import MateriaPrimasPage from './pages/MateriaPrimasPage';
 import ClientesPage from './pages/ClientesPage';
 import FornecedoresPage from './pages/FornecedoresPage';
+import TransportadorasPage from './pages/TransportadorasPage';
 import CategoriasPage from './pages/CategoriasPage';
 import PedidosPage from './pages/PedidosPage';
 import OrdensProducaoPage from './pages/OrdensProducaoPage';
@@ -24,8 +25,13 @@ import DespachoPage from './pages/DespachoPage';
 import DespachoPublicoPage from './pages/DespachoPublicoPage';
 import ComprasPage from './pages/ComprasPage';
 import PlaceholderPage from './pages/PlaceholderPage';
+import TesteAsaas from './pages/TesteAsaas';
+import TesteAsaasCompleto from './pages/TesteAsaasCompleto';
+import TesteFluxoCliente from './pages/TesteFluxoCliente';
+import TesteBase from './pages/TesteBase';
+import TesteClienteIntegrado from './pages/TesteClienteIntegrado';
 
-export type Page = 'Dashboard' | 'Clientes' | 'Orçamentos' | 'Pedidos' | 'Despacho' | 'Relatórios de Vendas' | 'Ordens de Produção' | 'Linha de Produção' | 'Programação' | 'Controle de Qualidade' | 'Relatórios de Produção' | 'Produtos Revenda' | 'Matérias-Primas Estoque' | 'Compras' | 'Movimentações' | 'Inventário' | 'Alertas' | 'Produtos' | 'Matéria-Prima' | 'Fornecedores' | 'Categorias' | 'Contas a Receber' | 'Contas a Pagar' | 'Fluxo de Caixa' | 'Análise de Lucratividade' | 'Relatórios Gerais' | 'Usuários' | 'Permissões' | 'Parâmetros';
+export type Page = 'Dashboard' | 'Clientes' | 'Orçamentos' | 'Pedidos' | 'Despacho' | 'Relatórios de Vendas' | 'Ordens de Produção' | 'Linha de Produção' | 'Relatórios de Produção' | 'Produtos Revenda' | 'Matérias-Primas' | 'Compras' | 'Movimentações' | 'Inventário' | 'Alertas' | 'Produtos' | 'Matéria-Prima' | 'Fornecedores' | 'Transportadoras' | 'Categorias' | 'Contas a Receber' | 'Contas a Pagar' | 'Fluxo de Caixa' | 'Análise de Lucratividade' | 'Relatórios Gerais' | 'Usuários' | 'Permissões' | 'Parâmetros' | 'Teste Asaas' | 'Teste Asaas Completo' | 'Fluxo Cliente ERP+Asaas' | 'Teste Base ERP' | 'Teste Cliente Integrado';
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('Dashboard');
@@ -52,6 +58,8 @@ const App: React.FC = () => {
         return <ClientesPage />;
       case 'Fornecedores':
         return <FornecedoresPage />;
+      case 'Transportadoras':
+        return <TransportadorasPage />;
       case 'Categorias':
         return <CategoriasPage />;
       case 'Pedidos':
@@ -64,7 +72,7 @@ const App: React.FC = () => {
         return <DespachoPage />;
       case 'Produtos Revenda':
         return <ProdutosRevendaPage />;
-      case 'Matérias-Primas Estoque':
+      case 'Matérias-Primas':
         return <MateriasPrimasEstoquePage />;
       case 'Compras':
         return <ComprasPage />;
@@ -76,6 +84,16 @@ const App: React.FC = () => {
         return <AlertasPage />;
       case 'Usuários':
         return <UsuariosPage />;
+      case 'Teste Asaas':
+        return <TesteAsaas />;
+      case 'Teste Asaas Completo':
+        return <TesteAsaasCompleto />;
+      case 'Fluxo Cliente ERP+Asaas':
+        return <TesteFluxoCliente />;
+      case 'Teste Base ERP':
+        return <TesteBase />;
+      case 'Teste Cliente Integrado':
+        return <TesteClienteIntegrado />;
       default:
         return <PlaceholderPage title={currentPage} />;
     }

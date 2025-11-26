@@ -43,17 +43,17 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, isOpen, setOpen
       group: 'GESTÃO',
       items: [
         { name: 'Vendas', icon: <ShoppingCart className="h-5 w-5" />, page: 'Pedidos' as Page, subItems: ['Pedidos', 'Despacho', 'Relatórios de Vendas'] },
-        { name: 'Produção', icon: <Factory className="h-5 w-5" />, page: 'Ordens de Produção' as Page, subItems: ['Ordens de Produção', 'Linha de Produção', 'Programação', 'Controle de Qualidade', 'Relatórios de Produção'] },
-        { name: 'Estoque', icon: <Package className="h-5 w-5" />, page: 'Movimentações' as Page, subItems: ['Produtos Revenda', 'Matérias-Primas Estoque', 'Compras', 'Movimentações', 'Inventário', 'Alertas'] },
+        { name: 'Produção', icon: <Factory className="h-5 w-5" />, page: 'Ordens de Produção' as Page, subItems: ['Ordens de Produção', 'Linha de Produção', 'Relatórios de Produção'] },
+        { name: 'Estoque', icon: <Package className="h-5 w-5" />, page: 'Movimentações' as Page, subItems: ['Produtos Revenda', 'Matérias-Primas', 'Compras', 'Movimentações', 'Inventário', 'Alertas'] },
         { name: 'Financeiro', icon: <Wallet className="h-5 w-5" />, page: 'Contas a Receber' as Page, subItems: ['Contas a Receber', 'Contas a Pagar', 'Fluxo de Caixa', 'Análise de Lucratividade'] },
       ]
     },
     {
       group: 'CONFIGURAÇÃO',
       items: [
-        { name: 'Cadastros', icon: <Grid3x3 className="h-5 w-5" />, page: 'Clientes' as Page, subItems: ['Clientes', 'Fornecedores', 'Produtos', 'Matéria-Prima', 'Categorias'] },
+        { name: 'Cadastros', icon: <Grid3x3 className="h-5 w-5" />, page: 'Clientes' as Page, subItems: ['Clientes', 'Fornecedores', 'Transportadoras', 'Produtos', 'Matéria-Prima', 'Categorias'] },
         { name: 'Relatórios', icon: <FileBarChart className="h-5 w-5" />, page: 'Relatórios Gerais' as Page },
-        { name: 'Sistema', icon: <Settings className="h-5 w-5" />, page: 'Usuários' as Page, subItems: ['Usuários', 'Permissões', 'Parâmetros'] },
+        { name: 'Sistema', icon: <Settings className="h-5 w-5" />, page: 'Usuários' as Page, subItems: ['Usuários', 'Permissões', 'Parâmetros', 'Teste Asaas', 'Teste Asaas Completo', 'Fluxo Cliente ERP+Asaas', 'Teste Base ERP', 'Teste Cliente Integrado'] },
       ]
     }
   ];
