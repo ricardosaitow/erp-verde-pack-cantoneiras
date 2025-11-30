@@ -27,9 +27,11 @@ import {
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import {
   Plus, Trash2, ShoppingCart, Save, X, User, List, DollarSign, Truck, MessageSquare,
-  AlertTriangle, ArrowRight, Check, RotateCcw
+  AlertTriangle, ArrowRight, Check, RotateCcw, CreditCard, Percent, Calendar, Info
 } from 'lucide-react';
 import {
   verificarEstoqueMateriasPrimas,
@@ -38,16 +40,34 @@ import {
 import { buscarLotesDisponiveis } from '../../lib/estoque';
 import { supabase } from '../../lib/supabase';
 import { baseClient } from '../../lib/base';
+import { asaasClient } from '../../lib/asaas';
+import type { AsaasBillingType } from '../../types/asaas';
 
-// Tipos de cobrança disponíveis
+// Tipos de cobrança disponíveis (Asaas)
 const TIPOS_COBRANCA = [
-  { value: 'BOLETO', label: 'Boleto' },
+  { value: 'BOLETO', label: 'Boleto Bancário' },
   { value: 'PIX', label: 'PIX' },
   { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
-  { value: 'DEBIT_CARD', label: 'Cartão de Débito' },
-  { value: 'TRANSFER', label: 'Transferência' },
-  { value: 'DEPOSIT', label: 'Depósito' },
-  { value: 'CASH', label: 'Dinheiro' },
+  { value: 'UNDEFINED', label: 'Cliente Escolhe' },
+];
+
+// Opções de parcelamento
+const OPCOES_PARCELAS = [
+  { value: 1, label: 'À Vista (1x)' },
+  { value: 2, label: '2x' },
+  { value: 3, label: '3x' },
+  { value: 4, label: '4x' },
+  { value: 5, label: '5x' },
+  { value: 6, label: '6x' },
+  { value: 7, label: '7x' },
+  { value: 8, label: '8x' },
+  { value: 9, label: '9x' },
+  { value: 10, label: '10x' },
+  { value: 11, label: '11x' },
+  { value: 12, label: '12x' },
+  { value: 15, label: '15x' },
+  { value: 18, label: '18x' },
+  { value: 21, label: '21x (Visa/Master)' },
 ];
 
 // Tipos de frete disponíveis
@@ -110,8 +130,8 @@ interface PedidoItemForm {
 interface PedidoFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (data: any) => Promise<{ error: string | null }>;
-  onUpdate: (id: string, data: any) => Promise<{ error: string | null }>;
+  onCreate: (data: any) => Promise<{ error: string | null; data?: any }>;
+  onUpdate: (id: string, data: any) => Promise<{ error: string | null; data?: any }>;
   pedido: PedidoCompleto | null;
   clientes: Cliente[];
   produtos: ProdutoComCusto[];
@@ -163,6 +183,16 @@ export default function PedidoFormModal({
     // Dados de Transporte
     transportadora_id: '',
     tipo_frete: 'CIF',
+    // Dados de Cobrança Asaas
+    gerar_cobranca_asaas: true,
+    numero_parcelas: 1,
+    valor_parcela: 0,
+    desconto_antecipado_valor: 0,
+    desconto_antecipado_dias: 0,
+    desconto_antecipado_tipo: 'FIXED' as 'FIXED' | 'PERCENTAGE',
+    juros_atraso: 0, // % ao mês
+    multa_atraso: 0, // % ou valor fixo
+    multa_atraso_tipo: 'PERCENTAGE' as 'FIXED' | 'PERCENTAGE',
   });
 
   const [itens, setItens] = useState<PedidoItemForm[]>([]);
@@ -309,6 +339,16 @@ export default function PedidoFormModal({
         data_vencimento: pedido.data_vencimento || '',
         transportadora_id: pedido.transportadora_id || '',
         tipo_frete: pedido.tipo_frete || 'CIF',
+        // Dados de Cobrança Asaas
+        gerar_cobranca_asaas: (pedido as any).gerar_cobranca_asaas || false,
+        numero_parcelas: (pedido as any).numero_parcelas || 1,
+        valor_parcela: (pedido as any).valor_parcela || 0,
+        desconto_antecipado_valor: (pedido as any).desconto_antecipado_valor || 0,
+        desconto_antecipado_dias: (pedido as any).desconto_antecipado_dias || 0,
+        desconto_antecipado_tipo: (pedido as any).desconto_antecipado_tipo || 'FIXED',
+        juros_atraso: (pedido as any).juros_atraso || 0,
+        multa_atraso: (pedido as any).multa_atraso || 0,
+        multa_atraso_tipo: (pedido as any).multa_atraso_tipo || 'PERCENTAGE',
       });
 
       if (pedido.itens) {
@@ -355,6 +395,16 @@ export default function PedidoFormModal({
       data_vencimento: dataVencimentoPadrao.toISOString().split('T')[0],
       transportadora_id: '',
       tipo_frete: 'CIF',
+      // Dados de Cobrança Asaas
+      gerar_cobranca_asaas: true,
+      numero_parcelas: 1,
+      valor_parcela: 0,
+      desconto_antecipado_valor: 0,
+      desconto_antecipado_dias: 0,
+      desconto_antecipado_tipo: 'FIXED',
+      juros_atraso: 0,
+      multa_atraso: 0,
+      multa_atraso_tipo: 'PERCENTAGE',
     });
     setItens([]);
   };
@@ -786,6 +836,81 @@ export default function PedidoFormModal({
       return;
     }
 
+    // Gerar cobrança no Asaas se marcado
+    if (formData.gerar_cobranca_asaas && !pedido && result.data) {
+      try {
+        // Buscar cliente para obter asaas_customer_id
+        const cliente = clientes.find(c => c.id === formData.cliente_id);
+        if (!cliente?.asaas_customer_id) {
+          toast.warning('Pedido criado, mas cliente não possui cadastro no Asaas. Cobrança não gerada.');
+        } else {
+          const tipoAsaas = formData.tipo_cobranca as AsaasBillingType;
+          const isParcelado = formData.numero_parcelas > 1;
+
+          // Montar objeto de cobrança
+          const cobrancaData: any = {
+            customer: cliente.asaas_customer_id,
+            billingType: tipoAsaas,
+            dueDate: formData.data_vencimento,
+            description: `Pedido #${result.data.numero_pedido || 'Novo'} - ${itens.length} item(ns)`,
+            externalReference: result.data.id || '',
+          };
+
+          // Valor: se parcelado, usar installmentCount e totalValue
+          if (isParcelado) {
+            cobrancaData.installmentCount = formData.numero_parcelas;
+            cobrancaData.totalValue = formData.valor_total;
+          } else {
+            cobrancaData.value = formData.valor_total;
+          }
+
+          // Desconto antecipado
+          if (formData.desconto_antecipado_valor > 0 && formData.desconto_antecipado_dias > 0) {
+            cobrancaData.discount = {
+              value: formData.desconto_antecipado_valor,
+              dueDateLimitDays: formData.desconto_antecipado_dias,
+              type: formData.desconto_antecipado_tipo,
+            };
+          }
+
+          // Juros
+          if (formData.juros_atraso > 0) {
+            cobrancaData.interest = {
+              value: formData.juros_atraso,
+            };
+          }
+
+          // Multa
+          if (formData.multa_atraso > 0) {
+            cobrancaData.fine = {
+              value: formData.multa_atraso,
+              type: formData.multa_atraso_tipo,
+            };
+          }
+
+          console.log('Gerando cobrança Asaas:', cobrancaData);
+          const cobrancaResult = await asaasClient.createPayment(cobrancaData);
+
+          if (cobrancaResult && (cobrancaResult as any).id) {
+            // Atualizar pedido com ID da cobrança Asaas
+            await supabase
+              .from('pedidos')
+              .update({
+                asaas_cobranca_id: (cobrancaResult as any).id,
+                asaas_invoice_url: (cobrancaResult as any).invoiceUrl,
+                asaas_bank_slip_url: (cobrancaResult as any).bankSlipUrl,
+              })
+              .eq('id', result.data.id);
+
+            toast.success('Cobrança gerada no Asaas com sucesso!');
+          }
+        }
+      } catch (asaasError: any) {
+        console.error('Erro ao gerar cobrança Asaas:', asaasError);
+        toast.error('Pedido criado, mas erro ao gerar cobrança no Asaas: ' + (asaasError.message || 'Erro desconhecido'));
+      }
+    }
+
     toast.success(`Pedido ${pedido ? 'atualizado' : 'criado'} com sucesso!`);
     onSuccess();
   };
@@ -986,44 +1111,6 @@ export default function PedidoFormModal({
                               <span className="text-blue-600 font-bold">
                                 Subtotal c/ Frete: {formatCurrency(item.subtotal_com_frete || item.subtotal)}
                               </span>
-                            </div>
-                          </div>
-                        )}
-
-                        {item.tipo_produto === 'fabricado' && produto && produto.receitas && produto.receitas.length > 0 && item.materiais_necessarios && item.materiais_necessarios.length > 0 && (
-                          <div className="mt-3 pt-3 border-t">
-                            <p className="text-xs font-semibold mb-2">📦 Matéria-prima necessária:</p>
-                            <div className="space-y-1">
-                              {item.materiais_necessarios.map((materia, idx) => (
-                                <Alert
-                                  key={idx}
-                                  className={`text-xs p-2 ${
-                                    materia.disponivel
-                                      ? 'bg-green-50 border-green-200'
-                                      : 'bg-destructive/10 border-destructive/20'
-                                  }`}
-                                >
-                                  <div className="flex justify-between items-center">
-                                    <span className="font-medium">{materia.materia_nome}</span>
-                                    <span className={materia.disponivel ? 'text-green-700' : 'text-destructive'}>
-                                      {materia.disponivel ? '✓' : '⚠️'}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-center mt-1 text-muted-foreground">
-                                    <span>
-                                      Consumo: {formatQuantity(materia.consumo_kg, materia.unidade_estoque)}
-                                    </span>
-                                    <span>
-                                      Estoque: {formatQuantity(materia.estoque_disponivel_kg, materia.unidade_estoque)}
-                                    </span>
-                                  </div>
-                                  {!materia.disponivel && (
-                                    <p className="text-xs text-destructive mt-1">
-                                      Faltam: {formatQuantity(materia.consumo_kg - materia.estoque_disponivel_kg, materia.unidade_estoque)}
-                                    </p>
-                                  )}
-                                </Alert>
-                              ))}
                             </div>
                           </div>
                         )}
@@ -1304,20 +1391,28 @@ export default function PedidoFormModal({
 
             <Separator />
 
-            {/* Pagamento */}
+            {/* Pagamento e Cobrança */}
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-                <DollarSign className="h-4 w-4" />
-                <span>Pagamento (para NF-e)</span>
+                <CreditCard className="h-4 w-4" />
+                <span>Pagamento e Cobrança</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+              {/* Linha 1: Tipo de Cobrança, Parcelas, Data Vencimento */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="tipo_cobranca" className="text-sm font-medium">
-                    Tipo de Cobrança
+                    Forma de Pagamento
                   </Label>
                   <Select
                     value={formData.tipo_cobranca}
-                    onValueChange={(value) => setFormData({ ...formData, tipo_cobranca: value })}
+                    onValueChange={(value) => {
+                      setFormData({ ...formData, tipo_cobranca: value });
+                      // Limitar parcelas se não for cartão
+                      if (value !== 'CREDIT_CARD' && formData.numero_parcelas > 12) {
+                        setFormData(prev => ({ ...prev, tipo_cobranca: value, numero_parcelas: 12 }));
+                      }
+                    }}
                   >
                     <SelectTrigger className="h-10">
                       <SelectValue placeholder="Selecione..." />
@@ -1331,9 +1426,55 @@ export default function PedidoFormModal({
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="numero_parcelas" className="text-sm font-medium">
+                    Parcelas
+                  </Label>
+                  <Select
+                    value={String(formData.numero_parcelas)}
+                    onValueChange={(value) => {
+                      const parcelas = Number(value);
+                      const valorParcela = parcelas > 0 ? formData.valor_total / parcelas : 0;
+                      setFormData({ ...formData, numero_parcelas: parcelas, valor_parcela: valorParcela });
+                    }}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OPCOES_PARCELAS.filter(p => {
+                        // Limitar parcelas baseado no tipo de pagamento
+                        if (formData.tipo_cobranca === 'CREDIT_CARD') {
+                          return p.value <= 21; // Visa/Master até 21x
+                        }
+                        return p.value <= 12; // Outros até 12x
+                      }).map((parcela) => (
+                        <SelectItem key={parcela.value} value={String(parcela.value)}>
+                          {parcela.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="data_vencimento" className="text-sm font-medium">
+                    <Calendar className="h-3 w-3 inline mr-1" />
+                    Vencimento (1ª parcela)
+                  </Label>
+                  <Input
+                    id="data_vencimento"
+                    type="date"
+                    value={formData.data_vencimento}
+                    onChange={(e) => setFormData({ ...formData, data_vencimento: e.target.value })}
+                    className="h-10"
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="banco" className="text-sm font-medium">
-                    Banco
+                    Banco (NF-e)
                   </Label>
                   <Select
                     value={formData.banco_id ? String(formData.banco_id) : ''}
@@ -1352,43 +1493,148 @@ export default function PedidoFormModal({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="data_vencimento" className="text-sm font-medium">
-                    Data de Vencimento
-                  </Label>
-                  <Input
-                    id="data_vencimento"
-                    type="date"
-                    value={formData.data_vencimento}
-                    onChange={(e) => setFormData({ ...formData, data_vencimento: e.target.value })}
-                    className="h-10"
-                  />
+              </div>
+
+              {/* Preview do valor das parcelas */}
+              {formData.numero_parcelas > 1 && formData.valor_total > 0 && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                  <p className="text-sm text-blue-800">
+                    <strong>{formData.numero_parcelas}x</strong> de{' '}
+                    <strong>{formatCurrency(formData.valor_total / formData.numero_parcelas)}</strong>
+                    {' '}= Total: {formatCurrency(formData.valor_total)}
+                  </p>
+                </div>
+              )}
+
+              {/* Linha 2: Configurações avançadas de cobrança */}
+              <div className="border rounded-md p-4 space-y-4 bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Info className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Configurações Avançadas de Cobrança</span>
+                  </div>
+                </div>
+
+                {/* Desconto para pagamento antecipado */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-muted-foreground">
+                      Desconto Antecipado
+                    </Label>
+                    <div className="flex gap-2">
+                      <CurrencyInput
+                        value={formData.desconto_antecipado_valor}
+                        onChange={(valor) => setFormData({ ...formData, desconto_antecipado_valor: valor })}
+                        className="h-10 flex-1"
+                        placeholder="Valor"
+                      />
+                      <Select
+                        value={formData.desconto_antecipado_tipo}
+                        onValueChange={(value) => setFormData({ ...formData, desconto_antecipado_tipo: value as 'FIXED' | 'PERCENTAGE' })}
+                      >
+                        <SelectTrigger className="h-10 w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="FIXED">R$</SelectItem>
+                          <SelectItem value="PERCENTAGE">%</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-muted-foreground">
+                      Dias antes do vencimento
+                    </Label>
+                    <NumberInput
+                      value={formData.desconto_antecipado_dias}
+                      onChange={(valor) => setFormData({ ...formData, desconto_antecipado_dias: valor })}
+                      className="h-10"
+                      placeholder="Ex: 5"
+                      min={0}
+                      max={30}
+                    />
+                  </div>
+
+                  <div className="flex items-end pb-2">
+                    {formData.desconto_antecipado_valor > 0 && formData.desconto_antecipado_dias > 0 && (
+                      <p className="text-xs text-green-600">
+                        {formData.desconto_antecipado_tipo === 'PERCENTAGE'
+                          ? `${formData.desconto_antecipado_valor}% de desconto`
+                          : `${formatCurrency(formData.desconto_antecipado_valor)} de desconto`
+                        } se pago até {formData.desconto_antecipado_dias} dias antes
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Juros e Multa por atraso */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-muted-foreground">
+                      <Percent className="h-3 w-3 inline mr-1" />
+                      Juros por Atraso (% ao mês)
+                    </Label>
+                    <NumberInput
+                      value={formData.juros_atraso}
+                      onChange={(valor) => setFormData({ ...formData, juros_atraso: valor })}
+                      className="h-10"
+                      placeholder="Ex: 1"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-muted-foreground">
+                      Multa por Atraso
+                    </Label>
+                    <div className="flex gap-2">
+                      <NumberInput
+                        value={formData.multa_atraso}
+                        onChange={(valor) => setFormData({ ...formData, multa_atraso: valor })}
+                        className="h-10 flex-1"
+                        placeholder="Ex: 2"
+                        min={0}
+                        max={formData.multa_atraso_tipo === 'PERCENTAGE' ? 10 : 1000}
+                        step={0.1}
+                      />
+                      <Select
+                        value={formData.multa_atraso_tipo}
+                        onValueChange={(value) => setFormData({ ...formData, multa_atraso_tipo: value as 'FIXED' | 'PERCENTAGE' })}
+                      >
+                        <SelectTrigger className="h-10 w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="PERCENTAGE">%</SelectItem>
+                          <SelectItem value="FIXED">R$</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="pagamento" className="text-sm font-medium">
-                    Forma de Pagamento (texto)
+
+              {/* Checkbox para gerar cobrança */}
+              <div className="flex items-center space-x-3 p-4 border rounded-md bg-blue-50/50 border-blue-200">
+                <Switch
+                  id="gerar_cobranca_asaas"
+                  checked={formData.gerar_cobranca_asaas}
+                  onCheckedChange={(checked) => setFormData({ ...formData, gerar_cobranca_asaas: checked })}
+                />
+                <div className="flex-1">
+                  <Label htmlFor="gerar_cobranca_asaas" className="text-sm font-medium cursor-pointer">
+                    Gerar cobrança automaticamente
                   </Label>
-                  <Input
-                    id="pagamento"
-                    value={formData.forma_pagamento}
-                    onChange={(e) => setFormData({ ...formData, forma_pagamento: e.target.value })}
-                    className="h-10"
-                    placeholder="Ex: 30/60/90 dias"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="condicoes" className="text-sm font-medium">
-                    Condições de Pagamento
-                  </Label>
-                  <Input
-                    id="condicoes"
-                    value={formData.condicoes_pagamento}
-                    onChange={(e) => setFormData({ ...formData, condicoes_pagamento: e.target.value })}
-                    className="h-10"
-                    placeholder="Ex: À vista com 5% desconto"
-                  />
+                  <p className="text-xs text-muted-foreground">
+                    {formData.tipo_cobranca === 'BOLETO' && 'Será gerado um boleto bancário para o cliente'}
+                    {formData.tipo_cobranca === 'PIX' && 'Será gerado um QR Code PIX para pagamento'}
+                    {formData.tipo_cobranca === 'CREDIT_CARD' && 'Será enviado link para pagamento com cartão'}
+                    {formData.tipo_cobranca === 'UNDEFINED' && 'Cliente poderá escolher a forma de pagamento'}
+                  </p>
                 </div>
               </div>
             </div>
