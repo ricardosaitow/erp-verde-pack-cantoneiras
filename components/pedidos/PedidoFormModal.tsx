@@ -82,6 +82,11 @@ interface PedidoItemForm {
   preco_unitario: number;
   subtotal: number;
   observacoes?: string;
+  // Campos de frete CIF
+  frete_unitario?: number;
+  frete_total_item?: number;
+  preco_unitario_com_frete?: number;
+  subtotal_com_frete?: number;
   materiais_necessarios?: Array<{
     materia_prima_id: string;
     materia_nome: string;
@@ -377,7 +382,11 @@ export default function PedidoFormModal({
   };
 
   const removeItem = (index: number) => {
-    const newItens = itens.filter((_, i) => i !== index);
+    let newItens = itens.filter((_, i) => i !== index);
+    // Redistribuir frete se for CIF e tiver frete
+    if (formData.tipo_frete === 'CIF' && formData.valor_frete > 0 && newItens.length > 0) {
+      newItens = distribuirFrete(newItens, formData.valor_frete);
+    }
     setItens(newItens);
     calcularTotais(newItens);
   };
@@ -499,8 +508,17 @@ export default function PedidoFormModal({
       (item as any)[field] = value;
     }
 
-    setItens(newItens);
-    calcularTotais(newItens);
+    // Redistribuir frete se for CIF e houver mudança de quantidade ou produto
+    let itensAtualizados = newItens;
+    if (formData.tipo_frete === 'CIF' && formData.valor_frete > 0) {
+      const camposQueAfetamFrete = ['quantidade_pecas', 'comprimento_cada_mm', 'quantidade_simples', 'produto_id'];
+      if (camposQueAfetamFrete.includes(field as string)) {
+        itensAtualizados = distribuirFrete(newItens, formData.valor_frete);
+      }
+    }
+
+    setItens(itensAtualizados);
+    calcularTotais(itensAtualizados);
   };
 
   // Atualizar custo administrativo de uma matéria-prima
@@ -570,6 +588,113 @@ export default function PedidoFormModal({
       valor_desconto: valorDesconto,
       valor_total: valorTotal,
     }));
+  };
+
+  // Função para obter a quantidade de um item (peças ou simples)
+  const getQuantidadeItem = (item: PedidoItemForm): number => {
+    if (item.quantidade_pecas && item.quantidade_pecas > 0) {
+      return item.quantidade_pecas;
+    }
+    return item.quantidade_simples || 0;
+  };
+
+  // Função para distribuir frete proporcionalmente entre os itens por quantidade
+  const distribuirFrete = (itensAtuais: PedidoItemForm[], valorFrete: number): PedidoItemForm[] => {
+    if (formData.tipo_frete !== 'CIF' || valorFrete <= 0 || itensAtuais.length === 0) {
+      // Se não for CIF ou não tiver frete, limpar campos de frete dos itens
+      return itensAtuais.map(item => ({
+        ...item,
+        frete_unitario: undefined,
+        frete_total_item: undefined,
+        preco_unitario_com_frete: undefined,
+        subtotal_com_frete: undefined,
+      }));
+    }
+
+    const totalQuantidade = itensAtuais.reduce((sum, item) => sum + getQuantidadeItem(item), 0);
+
+    if (totalQuantidade === 0) {
+      return itensAtuais;
+    }
+
+    const freteUnitario = valorFrete / totalQuantidade;
+
+    return itensAtuais.map(item => {
+      const quantidade = getQuantidadeItem(item);
+      const freteTotalItem = freteUnitario * quantidade;
+      return {
+        ...item,
+        frete_unitario: freteUnitario,
+        frete_total_item: freteTotalItem,
+        preco_unitario_com_frete: item.preco_unitario + freteUnitario,
+        subtotal_com_frete: item.subtotal + freteTotalItem,
+      };
+    });
+  };
+
+  // Função para recalcular frete de um item específico e redistribuir o restante
+  const recalcularFreteItem = (itensAtuais: PedidoItemForm[], itemIndex: number, novoFreteUnitario: number): PedidoItemForm[] => {
+    if (formData.tipo_frete !== 'CIF') return itensAtuais;
+
+    const valorFreteTotal = Number(formData.valor_frete) || 0;
+    if (valorFreteTotal <= 0) return itensAtuais;
+
+    const itemAlterado = itensAtuais[itemIndex];
+    const quantidadeItemAlterado = getQuantidadeItem(itemAlterado);
+    const freteTotalItemAlterado = novoFreteUnitario * quantidadeItemAlterado;
+
+    // Calcular frete restante para os outros itens
+    const freteRestante = valorFreteTotal - freteTotalItemAlterado;
+    const outrosItens = itensAtuais.filter((_, i) => i !== itemIndex);
+    const totalQuantidadeOutros = outrosItens.reduce((sum, item) => sum + getQuantidadeItem(item), 0);
+
+    const novoFreteUnitarioOutros = totalQuantidadeOutros > 0
+      ? freteRestante / totalQuantidadeOutros
+      : 0;
+
+    return itensAtuais.map((item, index) => {
+      const quantidade = getQuantidadeItem(item);
+      if (index === itemIndex) {
+        return {
+          ...item,
+          frete_unitario: novoFreteUnitario,
+          frete_total_item: freteTotalItemAlterado,
+          preco_unitario_com_frete: item.preco_unitario + novoFreteUnitario,
+          subtotal_com_frete: item.subtotal + freteTotalItemAlterado,
+        };
+      } else {
+        const freteTotalItem = novoFreteUnitarioOutros * quantidade;
+        return {
+          ...item,
+          frete_unitario: novoFreteUnitarioOutros,
+          frete_total_item: freteTotalItem,
+          preco_unitario_com_frete: item.preco_unitario + novoFreteUnitarioOutros,
+          subtotal_com_frete: item.subtotal + freteTotalItem,
+        };
+      }
+    });
+  };
+
+  // Função para validar se a distribuição do frete está correta
+  const validarDistribuicaoFrete = (): { status: 'correto' | 'abaixo' | 'acima'; diferenca: number } | null => {
+    if (formData.tipo_frete !== 'CIF') return null;
+
+    const valorFreteTotal = Number(formData.valor_frete) || 0;
+    if (valorFreteTotal <= 0) return null;
+
+    const freteDistribuido = itens.reduce(
+      (sum, item) => sum + (item.frete_total_item || 0),
+      0
+    );
+    const diferenca = valorFreteTotal - freteDistribuido;
+
+    if (Math.abs(diferenca) < 0.01) {
+      return { status: 'correto', diferenca: 0 };
+    } else if (diferenca > 0) {
+      return { status: 'abaixo', diferenca };
+    } else {
+      return { status: 'acima', diferenca: Math.abs(diferenca) };
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -839,6 +964,32 @@ export default function PedidoFormModal({
                           </span>
                         </div>
 
+                        {/* Linha de frete CIF com input editável */}
+                        {formData.tipo_frete === 'CIF' && formData.valor_frete > 0 && (
+                          <div className="mt-2 pt-2 border-t border-dashed flex items-center justify-between gap-4 text-xs">
+                            <div className="flex items-center gap-2">
+                              <Truck className="h-3 w-3 text-blue-600" />
+                              <span className="text-muted-foreground">Frete Unit.:</span>
+                              <CurrencyInput
+                                value={item.frete_unitario || 0}
+                                onChange={(valor) => {
+                                  const itensAtualizados = recalcularFreteItem(itens, index, valor);
+                                  setItens(itensAtualizados);
+                                }}
+                                className="h-7 w-24 text-xs"
+                              />
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <span className="text-muted-foreground">
+                                Unit. c/ Frete: <span className="font-semibold text-foreground">{formatCurrency(item.preco_unitario_com_frete || item.preco_unitario)}</span>
+                              </span>
+                              <span className="text-blue-600 font-bold">
+                                Subtotal c/ Frete: {formatCurrency(item.subtotal_com_frete || item.subtotal)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
                         {item.tipo_produto === 'fabricado' && produto && produto.receitas && produto.receitas.length > 0 && item.materiais_necessarios && item.materiais_necessarios.length > 0 && (
                           <div className="mt-3 pt-3 border-t">
                             <p className="text-xs font-semibold mb-2">📦 Matéria-prima necessária:</p>
@@ -1036,6 +1187,11 @@ export default function PedidoFormModal({
                     value={Number(formData.valor_frete) || 0}
                     onChange={(frete) => {
                       calcularTotais(itens, frete, formData.valor_desconto);
+                      // Redistribuir frete entre os itens se for CIF
+                      if (formData.tipo_frete === 'CIF' && frete > 0) {
+                        const itensComFrete = distribuirFrete(itens, frete);
+                        setItens(itensComFrete);
+                      }
                     }}
                     className="h-10"
                   />
@@ -1090,7 +1246,24 @@ export default function PedidoFormModal({
                   </Label>
                   <Select
                     value={formData.tipo_frete}
-                    onValueChange={(value) => setFormData({ ...formData, tipo_frete: value })}
+                    onValueChange={(value) => {
+                      setFormData({ ...formData, tipo_frete: value });
+                      // Quando muda o tipo de frete, redistribuir ou limpar
+                      if (value === 'CIF' && formData.valor_frete > 0) {
+                        const itensComFrete = distribuirFrete(itens, formData.valor_frete);
+                        setItens(itensComFrete);
+                      } else {
+                        // Se não for CIF, limpar frete dos itens
+                        const itensSemFrete = itens.map(item => ({
+                          ...item,
+                          frete_unitario: undefined,
+                          frete_total_item: undefined,
+                          preco_unitario_com_frete: undefined,
+                          subtotal_com_frete: undefined,
+                        }));
+                        setItens(itensSemFrete);
+                      }
+                    }}
                   >
                     <SelectTrigger className="h-10">
                       <SelectValue placeholder="Selecione..." />
