@@ -12,13 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Edit, Trash2, ShoppingCart, User, Calendar, FileText, Package, DollarSign, Truck, CreditCard, MessageSquare, Eye } from 'lucide-react';
+import { Edit, Trash2, ShoppingCart, User, Calendar, FileText, Package, DollarSign, Truck, CreditCard, MessageSquare, Eye, FileDown } from 'lucide-react';
 import type { PedidoCompleto } from '@/lib/database.types';
 import { formatCurrency } from '@/lib/format';
 import { toast } from 'sonner';
 import { StatusBadge } from '@/components/erp';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { getAllowedTransitions, isFinalStatus, type PedidoStatus, type PedidoTipo } from '@/lib/pedido-workflow';
+import { useOrcamentoPDF } from '@/hooks/useOrcamentoPDF';
 
 interface PedidoDetailModalProps {
   pedido: PedidoCompleto | null;
@@ -38,6 +39,7 @@ export function PedidoDetailModal({
   onUpdateStatus
 }: PedidoDetailModalProps) {
   const isAdmin = useIsAdmin();
+  const { gerarPDF } = useOrcamentoPDF();
 
   if (!pedido) return null;
 
@@ -53,6 +55,16 @@ export function PedidoDetailModal({
 
   const handleDelete = () => {
     onDelete(pedido.id);
+  };
+
+  const handleGerarPDF = async () => {
+    toast.loading('Gerando PDF do orçamento...', { id: 'pdf' });
+    const result = await gerarPDF(pedido);
+    if (result.success) {
+      toast.success('PDF gerado com sucesso!', { id: 'pdf' });
+    } else {
+      toast.error('Erro ao gerar PDF: ' + result.error, { id: 'pdf' });
+    }
   };
 
   const clienteNome = pedido.cliente?.nome_fantasia || pedido.cliente?.razao_social || 'Cliente não identificado';
@@ -170,33 +182,44 @@ export function PedidoDetailModal({
               </div>
               <Card>
                 <div className="divide-y">
-                  {pedido.itens.map((item) => (
-                    <div key={item.id} className="p-4">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <p className="font-medium">{item.produto?.nome || 'Produto não identificado'}</p>
-                          <div className="flex flex-col sm:flex-row sm:gap-4 text-sm text-muted-foreground mt-1">
-                            {item.quantidade_pecas && item.comprimento_cada_mm ? (
-                              <span>
-                                {item.quantidade_pecas.toLocaleString('pt-BR')} peças × {item.comprimento_cada_mm.toLocaleString('pt-BR')}mm
-                              </span>
-                            ) : (
-                              <span>{item.quantidade_simples?.toLocaleString('pt-BR')} {item.unidade_medida}</span>
+                  {pedido.itens.map((item) => {
+                    // Para CIF: usar valores com frete embutido
+                    const isCIF = pedido.tipo_frete === 'CIF';
+                    const precoUnitario = (isCIF && item.preco_unitario_com_frete)
+                      ? Number(item.preco_unitario_com_frete)
+                      : Number(item.preco_unitario) || 0;
+                    const subtotal = (isCIF && item.subtotal_com_frete)
+                      ? Number(item.subtotal_com_frete)
+                      : Number(item.subtotal) || 0;
+
+                    return (
+                      <div key={item.id} className="p-4">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <p className="font-medium">{item.produto?.nome || 'Produto não identificado'}</p>
+                            <div className="flex flex-col sm:flex-row sm:gap-4 text-sm text-muted-foreground mt-1">
+                              {item.quantidade_pecas && item.comprimento_cada_mm ? (
+                                <span>
+                                  {item.quantidade_pecas.toLocaleString('pt-BR')} peças × {item.comprimento_cada_mm.toLocaleString('pt-BR')}mm
+                                </span>
+                              ) : (
+                                <span>{item.quantidade_simples?.toLocaleString('pt-BR')} {item.unidade_medida}</span>
+                              )}
+                              <span className="text-xs">× {formatCurrency(precoUnitario)}</span>
+                            </div>
+                            {item.observacoes && (
+                              <p className="text-xs text-muted-foreground mt-1 italic">
+                                Obs: {item.observacoes}
+                              </p>
                             )}
-                            <span className="text-xs">× {formatCurrency(Number(item.preco_unitario) || 0)}</span>
                           </div>
-                          {item.observacoes && (
-                            <p className="text-xs text-muted-foreground mt-1 italic">
-                              Obs: {item.observacoes}
-                            </p>
-                          )}
+                          <p className="font-bold text-emerald-600 ml-4">
+                            {formatCurrency(subtotal)}
+                          </p>
                         </div>
-                        <p className="font-bold text-emerald-600 ml-4">
-                          {formatCurrency(Number(item.subtotal) || 0)}
-                        </p>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </Card>
             </div>
@@ -210,39 +233,53 @@ export function PedidoDetailModal({
               <DollarSign className="h-4 w-4" />
               <span>Valores</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
-                <div className="flex-1">
-                  <p className="text-xs text-muted-foreground">Valor dos Produtos</p>
-                  <p className="font-medium text-sm">{formatCurrency(Number(pedido.valor_produtos) || 0)}</p>
-                </div>
-              </div>
+            {(() => {
+              // Para CIF: calcular valores com frete embutido
+              const isCIF = pedido.tipo_frete === 'CIF';
+              const valorProdutos = isCIF
+                ? (pedido.itens || []).reduce((sum, item) => sum + (Number(item.subtotal_com_frete) || Number(item.subtotal) || 0), 0)
+                : Number(pedido.valor_produtos) || 0;
+              const valorTotal = isCIF
+                ? valorProdutos - (Number(pedido.valor_desconto) || 0)
+                : Number(pedido.valor_total) || 0;
 
-              {Number(pedido.valor_frete) > 0 && (
-                <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
-                  <div className="flex-1">
-                    <p className="text-xs text-muted-foreground">Frete</p>
-                    <p className="font-medium text-sm">{formatCurrency(Number(pedido.valor_frete) || 0)}</p>
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">Valor dos Produtos</p>
+                      <p className="font-medium text-sm">{formatCurrency(valorProdutos)}</p>
+                    </div>
+                  </div>
+
+                  {/* Frete - NÃO mostrar se for CIF (já está embutido) */}
+                  {!isCIF && Number(pedido.valor_frete) > 0 && (
+                    <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground">Frete ({pedido.tipo_frete})</p>
+                        <p className="font-medium text-sm">{formatCurrency(Number(pedido.valor_frete) || 0)}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {Number(pedido.valor_desconto) > 0 && (
+                    <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground">Desconto</p>
+                        <p className="font-medium text-sm text-red-600">- {formatCurrency(Number(pedido.valor_desconto) || 0)}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-start gap-3 p-3 bg-emerald-50 rounded-lg">
+                    <div className="flex-1">
+                      <p className="text-xs text-emerald-700">Valor Total</p>
+                      <p className="font-bold text-lg text-emerald-700">{formatCurrency(valorTotal)}</p>
+                    </div>
                   </div>
                 </div>
-              )}
-
-              {Number(pedido.valor_desconto) > 0 && (
-                <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
-                  <div className="flex-1">
-                    <p className="text-xs text-muted-foreground">Desconto</p>
-                    <p className="font-medium text-sm text-red-600">- {formatCurrency(Number(pedido.valor_desconto) || 0)}</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-start gap-3 p-3 bg-emerald-50 rounded-lg">
-                <div className="flex-1">
-                  <p className="text-xs text-emerald-700">Valor Total</p>
-                  <p className="font-bold text-lg text-emerald-700">{formatCurrency(Number(pedido.valor_total) || 0)}</p>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
           </div>
 
           {pedido.condicoes_pagamento && (
@@ -331,6 +368,12 @@ export function PedidoDetailModal({
           <Button variant="outline" onClick={onClose}>
             Fechar
           </Button>
+          {pedido.tipo === 'orcamento' && (
+            <Button variant="secondary" onClick={handleGerarPDF}>
+              <FileDown className="h-4 w-4 mr-2" />
+              Gerar PDF
+            </Button>
+          )}
           {isAdmin && (
             <Button variant="destructive" onClick={handleDelete}>
               <Trash2 className="h-4 w-4 mr-2" />

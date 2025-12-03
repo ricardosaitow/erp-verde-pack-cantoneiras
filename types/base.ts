@@ -218,6 +218,7 @@ export interface BaseResponse<T = any> {
 export interface BaseListParams {
   limit?: number; // Limite de registros (default: 20, max: 100)
   offset?: number; // Offset para paginação
+  page?: number; // Número da página (zero-based)
   search?: string; // Busca por texto
   externalReference?: string; // Filtrar por referência externa
 }

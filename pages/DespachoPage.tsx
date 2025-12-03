@@ -5,7 +5,9 @@ import { useNFe, type NFePaymentData } from '../hooks/useNFe';
 import { baseClient } from '../lib/base';
 import type { PedidoCompleto } from '../lib/database.types';
 import { formatCurrency } from '../lib/format';
-import { gerarPDFPedido } from '../lib/pdf-generator';
+import { buscarPalletsPedido, criarPalletsPedido, gerarPDFPallets } from '../lib/pdf-pallet';
+import { gerarPDFLaudoQualidade } from '../lib/pdf-laudo-qualidade';
+import { supabase } from '../lib/supabase';
 import { PageHeader, LoadingSpinner, EmptyState, StatusBadge } from '@/components/erp';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -17,7 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { RefreshCw, AlertTriangle, Truck, Package, Printer, FileText, CheckCircle2, Download, ExternalLink, ChevronDown } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Truck, Package, Printer, FileText, CheckCircle2, Download, ExternalLink, ChevronDown, QrCode, ClipboardCheck } from 'lucide-react';
 import { DespachoFilter, applyDespachoFilters, type DespachoFilterState } from '@/components/despacho/DespachoFilter';
 import { NFePaymentModal } from '@/components/despacho/NFePaymentModal';
 
@@ -82,11 +84,54 @@ export default function DespachoPage() {
     setPrintingId(pedido.id);
 
     try {
-      await gerarPDFPedido(pedido);
-      toast.success(`PDF gerado para o pedido ${pedido.numero_pedido}`);
+      // Buscar pallets existentes do pedido
+      let palletsResult = await buscarPalletsPedido(supabase, pedido.id);
+
+      // Se não existirem pallets, criar baseado na quantidade_volumes
+      if (!palletsResult.pallets || palletsResult.pallets.length === 0) {
+        const quantidadePallets = (pedido as any).quantidade_volumes || 1;
+        palletsResult = await criarPalletsPedido(supabase, pedido.id, quantidadePallets);
+
+        if (!palletsResult.success || !palletsResult.pallets) {
+          toast.error('Erro ao criar pallets para o pedido');
+          setPrintingId(null);
+          return;
+        }
+      }
+
+      // Gerar PDF com etiquetas de pallets
+      const result = await gerarPDFPallets({
+        pedido,
+        pallets: palletsResult.pallets
+      });
+
+      if (result.success) {
+        toast.success(`PDF de pallets gerado para o pedido ${pedido.numero_pedido}`);
+      } else {
+        toast.error(`Erro ao gerar PDF: ${result.error}`);
+      }
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       toast.error('Erro ao gerar PDF. Tente novamente.');
+    } finally {
+      setPrintingId(null);
+    }
+  };
+
+  const handleImprimirLaudo = async (pedido: PedidoCompleto) => {
+    setPrintingId(pedido.id);
+
+    try {
+      const result = await gerarPDFLaudoQualidade(pedido);
+
+      if (result.success) {
+        toast.success(`Laudo de Qualidade gerado para o pedido ${pedido.numero_pedido}`);
+      } else {
+        toast.error(`Erro ao gerar Laudo: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Erro ao gerar Laudo:', error);
+      toast.error('Erro ao gerar Laudo. Tente novamente.');
     } finally {
       setPrintingId(null);
     }
@@ -317,22 +362,42 @@ export default function DespachoPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
-                          <Button
-                            onClick={() => handleImprimirPDF(pedido)}
-                            disabled={isPrinting}
-                            size="sm"
-                            variant="outline"
-                            className="gap-2"
-                          >
-                            {isPrinting ? (
-                              <LoadingSpinner size="sm" />
-                            ) : (
-                              <>
-                                <Printer className="h-4 w-4" />
-                                PDF
-                              </>
-                            )}
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                disabled={isPrinting}
+                                size="sm"
+                                variant="outline"
+                                className="gap-1"
+                              >
+                                {isPrinting ? (
+                                  <LoadingSpinner size="sm" />
+                                ) : (
+                                  <>
+                                    <Printer className="h-4 w-4" />
+                                    PDF
+                                    <ChevronDown className="h-3 w-3 ml-1" />
+                                  </>
+                                )}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => handleImprimirPDF(pedido)}
+                                disabled={isPrinting}
+                              >
+                                <QrCode className="h-4 w-4 mr-2" />
+                                Etiqueta de Pallet
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleImprimirLaudo(pedido)}
+                                disabled={isPrinting}
+                              >
+                                <ClipboardCheck className="h-4 w-4 mr-2" />
+                                Laudo de Qualidade
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                           {jaEntregue ? (
                             <>
                               {pedido.base_invoice_number ? (

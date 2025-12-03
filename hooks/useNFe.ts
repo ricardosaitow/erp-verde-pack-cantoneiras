@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { baseClient } from '../lib/base';
-import type { PedidoCompleto, Cliente } from '../lib/database.types';
-import type { BaseSalesOrder, BaseSalesOrderItem, BaseCustomer } from '../types/base';
+import type { PedidoCompleto, Cliente, PedidoItem, Produto } from '../lib/database.types';
+import type { BaseSalesOrder, BaseSalesOrderItem, BaseCustomer, BaseProduct } from '../types/base';
+
+// Tipo para item do pedido com produto
+type PedidoItemComProduto = PedidoItem & { produto?: Produto };
 
 interface EmitirNFeResult {
   success: boolean;
@@ -52,37 +55,164 @@ export function useNFe() {
   };
 
   /**
+   * Monta o nome do produto com comprimento
+   * Ex: "CANTONEIRA 40X40X3" + 1500mm = "CANTONEIRA 40X40X3_1500MM"
+   */
+  const montarNomeProdutoComComprimento = (nomeProduto: string, comprimentoMm: number): string => {
+    // Remove espaços extras e padroniza
+    const nomeBase = nomeProduto.trim().toUpperCase();
+    return `${nomeBase}_${comprimentoMm}MM`;
+  };
+
+  /**
+   * Busca ou cria produto no Base com o comprimento específico
+   * Retorna o ID do produto no Base
+   */
+  const buscarOuCriarProdutoBase = async (
+    item: PedidoItemComProduto
+  ): Promise<{ baseProductId: number | null; error: string | null }> => {
+    try {
+      const produto = item.produto;
+      if (!produto) {
+        return { baseProductId: null, error: 'Item sem produto vinculado' };
+      }
+
+      // Se não tem comprimento, usar o produto base diretamente
+      if (!item.comprimento_cada_mm) {
+        if (produto.base_id) {
+          return { baseProductId: Number(produto.base_id), error: null };
+        }
+        return { baseProductId: null, error: 'Produto sem ID do Base' };
+      }
+
+      // Montar nome com comprimento
+      const nomeComComprimento = montarNomeProdutoComComprimento(
+        produto.nome,
+        item.comprimento_cada_mm
+      );
+
+      // Criar externalReference único: produto_id + comprimento
+      const externalRef = `${produto.id}_${item.comprimento_cada_mm}mm`;
+
+      console.log(`🔍 Buscando produto no Base: ${nomeComComprimento} (ref: ${externalRef})`);
+
+      // Buscar no Base por externalReference
+      const searchResponse = await baseClient.listProducts({
+        externalReference: externalRef,
+        limit: 1
+      });
+
+      const produtosEncontrados = searchResponse.data as any;
+      const content = produtosEncontrados?.content || produtosEncontrados || [];
+
+      if (Array.isArray(content) && content.length > 0) {
+        const produtoExistente = content[0];
+        console.log(`✅ Produto já existe no Base: ${produtoExistente.id}`);
+        return { baseProductId: Number(produtoExistente.id), error: null };
+      }
+
+      // Produto não existe, criar no Base
+      console.log(`📦 Criando produto no Base: ${nomeComComprimento}`);
+
+      const novoProduto: BaseProduct = {
+        name: nomeComComprimento,
+        code: produto.codigo_interno ? `${produto.codigo_interno}_${item.comprimento_cada_mm}` : undefined,
+        ncm: produto.ncm || undefined,
+        unit: produto.unidade_venda === 'unidade' ? 'UN' : produto.unidade_venda?.toUpperCase() || 'UN',
+        price: Number(item.preco_unitario) || Number(produto.preco_venda_unitario) || 0,
+        externalReference: externalRef,
+      };
+
+      const createResponse = await baseClient.createProduct(novoProduto);
+
+      if (!createResponse.data?.id) {
+        return { baseProductId: null, error: 'Erro ao criar produto no Base: resposta sem ID' };
+      }
+
+      console.log(`✅ Produto criado no Base: ${createResponse.data.id}`);
+      return { baseProductId: Number(createResponse.data.id), error: null };
+    } catch (err: any) {
+      console.error('Erro ao buscar/criar produto:', err);
+      return { baseProductId: null, error: err.message || 'Erro ao buscar/criar produto' };
+    }
+  };
+
+  /**
    * Prepara os itens do pedido para o Base ERP
+   * Cria produtos com comprimento no Base se necessário
+   *
+   * IMPORTANTE: Para frete CIF, o valor do frete é EMBUTIDO no preço unitário
+   * do produto (calculado manualmente pelo usuário e salvo em preco_unitario_com_frete).
+   * Não enviamos frete separado na NF-e para CIF.
+   *
    * Campos da API: productId, unitPrice, quantity, costOfShipping, discountValue, itemValue
    */
-  const prepararItensBase = (pedido: PedidoCompleto): BaseSalesOrderItem[] => {
+  const prepararItensBase = async (pedido: PedidoCompleto): Promise<BaseSalesOrderItem[]> => {
     if (!pedido.itens || pedido.itens.length === 0) {
       return [];
     }
 
-    return pedido.itens.map((item) => {
-      const produto = item.produto;
+    const isCIF = pedido.tipo_frete === 'CIF';
 
-      // Calcular quantidade baseado no tipo de venda
-      let quantidade = 1;
+    const itensProcessados: BaseSalesOrderItem[] = [];
 
-      if (item.quantidade_pecas && item.comprimento_cada_mm) {
-        // Venda composta (peças x comprimento)
-        quantidade = item.quantidade_pecas;
-      } else if (item.quantidade_simples) {
-        // Venda simples
-        quantidade = item.quantidade_simples;
+    for (const item of pedido.itens) {
+      // Buscar ou criar produto no Base com comprimento
+      const { baseProductId, error } = await buscarOuCriarProdutoBase(item);
+
+      if (error || !baseProductId) {
+        console.error(`Erro no item ${item.produto?.nome}: ${error}`);
+        // Continua com o produto base se houver erro
+        const produtoBaseId = item.produto?.base_id ? Number(item.produto.base_id) : undefined;
+        if (!produtoBaseId) {
+          throw new Error(`Item ${item.produto?.nome} não tem produto válido no Base`);
+        }
       }
 
-      return {
-        productId: produto?.base_id ? Number(produto.base_id) : undefined,
-        unitPrice: Number(item.preco_unitario) || 0,
+      // Calcular quantidade (sempre em peças)
+      const quantidade = item.quantidade_pecas || item.quantidade_simples || 1;
+
+      // Para CIF: usar valores COM frete salvos no item (distribuídos manualmente pelo usuário)
+      // Para FOB: usar valores SEM frete (frete vai separado no pedido)
+      const usarValoresComFrete = isCIF && item.preco_unitario_com_frete && item.subtotal_com_frete;
+
+      // Calcular preço unitário por peça
+      let precoUnitarioFinal: number;
+      let itemValue: number;
+
+      if (usarValoresComFrete) {
+        // CIF: preço unitário já tem frete embutido (distribuído manualmente pelo usuário)
+        // O preco_unitario_com_frete é por peça
+        precoUnitarioFinal = Number(item.preco_unitario_com_frete);
+        itemValue = Number(item.subtotal_com_frete);
+
+        console.log(`📦 Item CIF: ${quantidade} peças`);
+        console.log(`   Preço unit. base: R$ ${Number(item.preco_unitario).toFixed(2)}`);
+        console.log(`   + Frete unit.: R$ ${(Number(item.frete_unitario) || 0).toFixed(2)}`);
+        console.log(`   = Preço unit. final: R$ ${precoUnitarioFinal.toFixed(2)}`);
+        console.log(`   Total item: R$ ${itemValue.toFixed(2)}`);
+      } else {
+        // FOB ou sem distribuição de frete: usar valores base
+        const subtotal = Number(item.subtotal) || 0;
+        precoUnitarioFinal = quantidade > 0 ? subtotal / quantidade : 0;
+        itemValue = subtotal;
+
+        console.log(`📦 Item FOB: ${quantidade} peças`);
+        console.log(`   Preço unit.: R$ ${precoUnitarioFinal.toFixed(2)}`);
+        console.log(`   Total item: R$ ${itemValue.toFixed(2)}`);
+      }
+
+      itensProcessados.push({
+        productId: baseProductId || undefined,
+        unitPrice: precoUnitarioFinal,
         quantity: quantidade,
-        costOfShipping: 0,
+        costOfShipping: 0, // Frete vai separado (FOB) ou está no preço (CIF)
         discountValue: 0,
-        itemValue: Number(item.subtotal) || 0,
-      };
-    });
+        itemValue: itemValue,
+      });
+    }
+
+    return itensProcessados;
   };
 
   /**
@@ -128,6 +258,29 @@ export function useNFe() {
   };
 
   /**
+   * Busca a transportadora do pedido e retorna o base_id
+   */
+  const buscarTransportadoraBase = async (transportadoraId: string): Promise<number | null> => {
+    try {
+      const { data: transportadora, error } = await supabase
+        .from('transportadoras')
+        .select('base_id')
+        .eq('id', transportadoraId)
+        .single();
+
+      if (error || !transportadora) {
+        console.warn(`⚠️ Transportadora ${transportadoraId} não encontrada`);
+        return null;
+      }
+
+      return transportadora.base_id || null;
+    } catch (err) {
+      console.error('Erro ao buscar transportadora:', err);
+      return null;
+    }
+  };
+
+  /**
    * Sincroniza pedido com o Base ERP
    * Retorna o ID do pedido no Base
    */
@@ -145,8 +298,9 @@ export function useNFe() {
 
       console.log(`🔄 Sincronizando pedido ${pedido.numero_pedido} com Base...`);
 
-      // Preparar itens
-      const itens = prepararItensBase(pedido);
+      // Preparar itens (busca/cria produtos com comprimento no Base)
+      console.log(`📦 Preparando ${pedido.itens?.length || 0} itens...`);
+      const itens = await prepararItensBase(pedido);
 
       if (itens.length === 0) {
         return { baseSalesOrderId: null, error: 'Pedido sem itens' };
@@ -160,6 +314,13 @@ export function useNFe() {
       const numeroPedido = await baseClient.getNextOrderNumber();
       console.log(`🔢 Próximo número: ${numeroPedido}`);
 
+      // Calcular valor total (soma dos itens, que já inclui frete CIF embutido)
+      const valorTotalItens = itens.reduce((sum, item) => sum + (item.itemValue || 0), 0);
+
+      // Para FOB, o frete vai separado. Para CIF, já está no preço do produto
+      const isCIF = pedido.tipo_frete === 'CIF';
+      const freteSeparado = isCIF ? 0 : (Number(pedido.valor_frete) || 0);
+
       const pedidoBase: BaseSalesOrder = {
         number: numeroPedido, // Número do pedido obtido do Base
         customerId: Number(baseCustomerId), // API espera número, não string
@@ -168,13 +329,13 @@ export function useNFe() {
         orderPayments: [
           {
             dueDate: paymentData.dueDate,
-            value: paymentData.value,
+            value: valorTotalItens + freteSeparado, // Valor do pagamento = itens + frete FOB (se houver)
             billingType: paymentData.billingType,
             bankId: paymentData.bankId,
           }
         ],
-        discountValue: Number(pedido.valor_desconto) || 0, // API usa discountValue
-        costOfShipping: Number(pedido.valor_frete) || 0, // API usa costOfShipping
+        discountValue: Number(pedido.valor_desconto) || 0,
+        costOfShipping: freteSeparado, // Só envia frete se for FOB
         observations: pedido.observacoes || undefined,
         externalReference: pedido.id,
       };

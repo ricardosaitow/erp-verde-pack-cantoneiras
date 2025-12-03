@@ -53,7 +53,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, isOpen, setOpen
       items: [
         { name: 'Cadastros', icon: <Grid3x3 className="h-5 w-5" />, page: 'Clientes' as Page, subItems: ['Clientes', 'Fornecedores', 'Transportadoras', 'Produtos', 'Matéria-Prima', 'Categorias'] },
         { name: 'Relatórios', icon: <FileBarChart className="h-5 w-5" />, page: 'Relatórios Gerais' as Page },
-        { name: 'Sistema', icon: <Settings className="h-5 w-5" />, page: 'Usuários' as Page, subItems: ['Usuários', 'Permissões', 'Parâmetros', 'Teste Asaas', 'Teste Asaas Completo', 'Fluxo Cliente ERP+Asaas', 'Teste Base ERP', 'Teste Cliente Integrado'] },
+        { name: 'Sistema', icon: <Settings className="h-5 w-5" />, page: 'Usuários' as Page, subItems: ['Usuários', 'Permissões', 'Parâmetros', 'Teste Asaas', 'Teste Asaas Completo', 'Fluxo Cliente ERP+Asaas', 'Teste Base ERP', 'Teste Cliente Integrado', 'Importar Produtos Base'] },
       ]
     }
   ];

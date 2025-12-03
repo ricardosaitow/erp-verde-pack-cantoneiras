@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 type PedidoStatus = 'pendente' | 'aprovado' | 'producao' | 'aguardando_despacho' | 'finalizado' | 'entregue' | 'cancelado' | 'recusado';
-type OPStatus = 'aguardando' | 'em_producao' | 'concluido' | 'cancelado';
+type OPStatus = 'aguardando' | 'em_producao' | 'parcial' | 'concluido' | 'cancelado';
 
 interface StatusBadgeProps {
   status: PedidoStatus | OPStatus | string;
@@ -24,6 +24,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   // Status de Ordens de Produção
   aguardando: { label: 'Aguardando', className: 'bg-gray-100 text-gray-800 hover:bg-gray-100' },
   em_producao: { label: 'Em Produção', className: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100' },
+  parcial: { label: 'Parcial', className: 'bg-purple-100 text-purple-800 hover:bg-purple-100' },
   concluido: { label: 'Concluído', className: 'bg-green-100 text-green-800 hover:bg-green-100' },
 };
 

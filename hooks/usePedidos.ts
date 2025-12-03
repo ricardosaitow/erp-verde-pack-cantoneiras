@@ -9,39 +9,44 @@ import {
   type ResultadoProvisao
 } from '../lib/estoque';
 import { calcularConsumoMaterial } from '../lib/calculos';
+import { asaasClient } from '../lib/asaas';
 
 // Locks globais para evitar criação duplicada de ordens de produção
 // Devem ficar fora do hook para persistir entre renderizações
 const pedidosEmProcessamento = new Set<string>();
-const itensComOrdemEmCriacao = new Set<string>(); // Lock por pedido_item_id
+const pedidosComOrdemEmCriacao = new Set<string>(); // Lock por pedido_id
 
-// Função auxiliar para criar ordem de produção de forma segura (evita duplicação)
-async function criarOrdemProducaoSegura(
+// Interface para item fabricado a ser incluído na OP
+interface ItemFabricadoParaOP {
+  pedido_item_id: string;
+  produto_id: string;
+  quantidade_metros: number;
+  quantidade_pecas?: number;
+  comprimento_cada_mm?: number;
+}
+
+// Função auxiliar para criar UMA ÚNICA ordem de produção por PEDIDO (não por item)
+// Agora também cria os itens individuais na tabela ordens_producao_itens
+async function criarOrdemProducaoPorPedido(
   pedidoId: string,
-  pedidoItemId: string,
-  produtoId: string,
-  produtoNome: string,
-  totalMetros: number,
   numeroPedido: string,
   dataProgramada: string | null,
-  instrucoesTecnicas: string | null,
-  quantidadePecas: number | null = null,
-  comprimentoCadaMm: number | null = null
-): Promise<{ success: boolean; error?: string }> {
-  // Lock por item - se já está criando ordem para este item, ignorar
-  if (itensComOrdemEmCriacao.has(pedidoItemId)) {
-    console.warn(`⚠️ Ordem de produção já está sendo criada para item ${pedidoItemId}, ignorando`);
-    return { success: false, error: 'Já está criando ordem para este item' };
+  itensFabricados: ItemFabricadoParaOP[]
+): Promise<{ success: boolean; error?: string; ordemId?: string }> {
+  // Lock por pedido - se já está criando ordem para este pedido, ignorar
+  if (pedidosComOrdemEmCriacao.has(pedidoId)) {
+    console.warn(`⚠️ Ordem de produção já está sendo criada para pedido ${pedidoId}, ignorando`);
+    return { success: false, error: 'Já está criando ordem para este pedido' };
   }
 
-  itensComOrdemEmCriacao.add(pedidoItemId);
+  pedidosComOrdemEmCriacao.add(pedidoId);
 
   try {
-    // Verificar IMEDIATAMENTE antes de criar se já existe ordem para este item
+    // Verificar se já existe ordem para este PEDIDO
     const { data: ordemExistente, error: checkError } = await supabase
       .from('ordens_producao')
       .select('id, numero_op')
-      .eq('pedido_item_id', pedidoItemId)
+      .eq('pedido_id', pedidoId)
       .maybeSingle();
 
     if (checkError) {
@@ -49,9 +54,15 @@ async function criarOrdemProducaoSegura(
     }
 
     if (ordemExistente) {
-      console.warn(`⚠️ Ordem de produção ${ordemExistente.numero_op} já existe para item ${pedidoItemId}, não criando duplicada`);
-      return { success: false, error: 'Ordem já existe' };
+      console.warn(`⚠️ Ordem de produção ${ordemExistente.numero_op} já existe para pedido ${pedidoId}, não criando duplicada`);
+      return { success: false, error: 'Ordem já existe para este pedido' };
     }
+
+    // Calcular total de metros de todos os itens
+    const totalMetrosGeral = itensFabricados.reduce((acc, item) => acc + item.quantidade_metros, 0);
+
+    // Pegar referência do primeiro item (retrocompatibilidade)
+    const primeiroItem = itensFabricados[0];
 
     // Gerar número da ordem de produção
     const { count: countOp } = await supabase
@@ -60,38 +71,61 @@ async function criarOrdemProducaoSegura(
 
     const numeroOp = `OP-${String((countOp || 0) + 1).padStart(4, '0')}`;
 
-    // Criar ordem de produção
-    const { error: ordemError } = await supabase
+    // Criar ordem de produção ÚNICA para o pedido
+    const { data: ordemCriada, error: ordemError } = await supabase
       .from('ordens_producao')
       .insert([{
         numero_op: numeroOp,
         pedido_id: pedidoId,
-        pedido_item_id: pedidoItemId,
-        produto_id: produtoId,
-        quantidade_produzir_metros: totalMetros,
-        quantidade_pecas: quantidadePecas,
-        comprimento_cada_mm: comprimentoCadaMm,
+        pedido_item_id: primeiroItem?.pedido_item_id || null,
+        produto_id: primeiroItem?.produto_id || null,
+        quantidade_produzir_metros: totalMetrosGeral,
         status: 'aguardando',
         data_programada: dataProgramada,
-        instrucoes_tecnicas: instrucoesTecnicas,
-        observacoes: `Gerada automaticamente do pedido ${numeroPedido}`,
-      }]);
+        observacoes: `Ordem de produção do pedido ${numeroPedido}${itensFabricados.length > 1 ? ` (${itensFabricados.length} produtos)` : ''}`,
+      }])
+      .select('id')
+      .single();
 
     if (ordemError) {
       // Verificar se é erro de duplicação (constraint violation)
       if (ordemError.code === '23505' || ordemError.message?.includes('duplicate') || ordemError.message?.includes('unique')) {
-        console.warn(`⚠️ Ordem de produção duplicada detectada pelo banco para item ${pedidoItemId}`);
+        console.warn(`⚠️ Ordem de produção duplicada detectada pelo banco para pedido ${pedidoId}`);
         return { success: false, error: 'Duplicação detectada pelo banco' };
       }
-      console.error(`Erro ao criar ordem de produção para ${produtoNome}:`, ordemError);
+      console.error(`Erro ao criar ordem de produção para pedido ${numeroPedido}:`, ordemError);
       return { success: false, error: ordemError.message };
     }
 
-    console.log(`✅ Ordem de produção criada: ${numeroOp} para ${produtoNome} (${totalMetros}m)`);
-    return { success: true };
+    // Criar os itens individuais da OP na tabela ordens_producao_itens
+    if (ordemCriada && itensFabricados.length > 0) {
+      const itensParaInserir = itensFabricados.map(item => ({
+        ordem_producao_id: ordemCriada.id,
+        pedido_item_id: item.pedido_item_id,
+        produto_id: item.produto_id,
+        quantidade_metros: item.quantidade_metros,
+        quantidade_pecas: item.quantidade_pecas || null,
+        comprimento_cada_mm: item.comprimento_cada_mm || null,
+        status: 'aguardando',
+      }));
+
+      const { error: itensError } = await supabase
+        .from('ordens_producao_itens')
+        .insert(itensParaInserir);
+
+      if (itensError) {
+        console.error(`Erro ao criar itens da ordem de produção ${numeroOp}:`, itensError);
+        // Não falhar a criação da OP por erro nos itens, mas logar
+      } else {
+        console.log(`✅ ${itensFabricados.length} item(ns) criado(s) para OP ${numeroOp}`);
+      }
+    }
+
+    console.log(`✅ Ordem de produção criada: ${numeroOp} para pedido ${numeroPedido} (${totalMetrosGeral.toFixed(2)}m total)`);
+    return { success: true, ordemId: ordemCriada?.id };
   } finally {
     // Sempre remover o lock no final
-    itensComOrdemEmCriacao.delete(pedidoItemId);
+    pedidosComOrdemEmCriacao.delete(pedidoId);
   }
 }
 
@@ -192,6 +226,25 @@ export function usePedidos() {
         // Campos de transporte
         transportadora_id: pedidoData.transportadora_id || null,
         tipo_frete: pedidoData.tipo_frete || null,
+        // Campos de Volume/Peso para NF-e
+        quantidade_volumes: pedidoData.quantidade_volumes ? Number(pedidoData.quantidade_volumes) : 1,
+        especie_volumes: pedidoData.especie_volumes || 'PALLET',
+        marca_volumes: pedidoData.marca_volumes || '1',
+        numeracao_volumes: pedidoData.numeracao_volumes || '1',
+        peso_bruto_kg: pedidoData.peso_bruto_kg ? Number(pedidoData.peso_bruto_kg) : null,
+        peso_liquido_kg: pedidoData.peso_liquido_kg ? Number(pedidoData.peso_liquido_kg) : null,
+        // Dados Fiscais
+        cfop: pedidoData.cfop || '5101',
+        dados_adicionais_nfe: pedidoData.dados_adicionais_nfe || null,
+        // Campos de cobrança Asaas (processados na aprovação)
+        gerar_cobranca_asaas: pedidoData.gerar_cobranca_asaas || false,
+        numero_parcelas: pedidoData.numero_parcelas ? Number(pedidoData.numero_parcelas) : 1,
+        desconto_antecipado_valor: pedidoData.desconto_antecipado_valor ? Number(pedidoData.desconto_antecipado_valor) : null,
+        desconto_antecipado_dias: pedidoData.desconto_antecipado_dias ? Number(pedidoData.desconto_antecipado_dias) : null,
+        desconto_antecipado_tipo: pedidoData.desconto_antecipado_tipo || null,
+        juros_atraso: pedidoData.juros_atraso ? Number(pedidoData.juros_atraso) : null,
+        multa_atraso: pedidoData.multa_atraso ? Number(pedidoData.multa_atraso) : null,
+        multa_atraso_tipo: pedidoData.multa_atraso_tipo || null,
       };
       
       // Criar pedido
@@ -235,14 +288,22 @@ export function usePedidos() {
           preco_unitario: Number(item.preco_unitario) || 0,
           subtotal: Number(item.subtotal) || 0,
           observacoes: item.observacoes || null,
+          // Campos de frete (distribuição manual CIF)
+          frete_unitario: item.frete_unitario ? Number(item.frete_unitario) : null,
+          frete_total_item: item.frete_total_item ? Number(item.frete_total_item) : null,
+          preco_unitario_com_frete: item.preco_unitario_com_frete ? Number(item.preco_unitario_com_frete) : null,
+          subtotal_com_frete: item.subtotal_com_frete ? Number(item.subtotal_com_frete) : null,
         }));
-        
+
+        console.log('📦 Itens a inserir:', JSON.stringify(itensParaInserir, null, 2));
+
         const { error: itensError } = await supabase
           .from('pedidos_itens')
           .insert(itensParaInserir);
-          
+
         if (itensError) {
           console.error('Erro ao criar itens do pedido:', itensError);
+          console.error('Dados enviados:', itensParaInserir);
           // Deletar o pedido criado se os itens falharem
           await supabase
             .from('pedidos')
@@ -265,8 +326,10 @@ export function usePedidos() {
             .eq('pedido_id', pedidoCriado.id);
 
           if (!itensComProdutosError && itensComProdutos) {
+            // Coletar itens fabricados para criar OP
+            const itensFabricados: ItemFabricadoParaOP[] = [];
+
             // Processar cada item do pedido
-            // A verificação de duplicação é feita na função criarOrdemProducaoSegura
             for (const itemPedido of itensComProdutos) {
               const produto = itemPedido.produto as any;
 
@@ -274,8 +337,8 @@ export function usePedidos() {
 
               if (produto.tipo === 'revenda') {
                 // Dar baixa imediata no estoque de produtos revenda
-                const quantidade = itemPedido.quantidade_simples 
-                  ? Number(itemPedido.quantidade_simples) 
+                const quantidade = itemPedido.quantidade_simples
+                  ? Number(itemPedido.quantidade_simples)
                   : 0;
 
                 if (quantidade > 0) {
@@ -293,35 +356,40 @@ export function usePedidos() {
                   }
                 }
               } else if (produto.tipo === 'fabricado') {
-                // Criar ordem de produção para produtos fabricados
+                // Coletar item fabricado para a OP
                 const totalMetros = itemPedido.total_calculado
                   ? Number(itemPedido.total_calculado)
                   : (itemPedido.quantidade_simples ? Number(itemPedido.quantidade_simples) : 0);
 
                 if (totalMetros > 0) {
-                  // Calcular data programada (se houver prazo de entrega e data do pedido)
-                  let dataProgramada: string | null = null;
-                  if (pedidoParaInserir.prazo_entrega_dias && pedidoParaInserir.data_pedido) {
-                    const dataPedido = new Date(pedidoParaInserir.data_pedido);
-                    dataPedido.setDate(dataPedido.getDate() + pedidoParaInserir.prazo_entrega_dias);
-                    dataProgramada = dataPedido.toISOString().split('T')[0];
-                  }
-
-                  // Usar função segura que evita duplicação
-                  await criarOrdemProducaoSegura(
-                    pedidoCriado.id,
-                    itemPedido.id,
-                    produto.id,
-                    produto.nome,
-                    totalMetros,
-                    pedidoParaInserir.numero_pedido,
-                    dataProgramada,
-                    produto.instrucoes_tecnicas || null,
-                    itemPedido.quantidade_pecas ? Number(itemPedido.quantidade_pecas) : null,
-                    itemPedido.comprimento_cada_mm ? Number(itemPedido.comprimento_cada_mm) : null
-                  );
+                  itensFabricados.push({
+                    pedido_item_id: itemPedido.id,
+                    produto_id: produto.id,
+                    quantidade_metros: totalMetros,
+                    quantidade_pecas: itemPedido.quantidade_pecas ? Number(itemPedido.quantidade_pecas) : undefined,
+                    comprimento_cada_mm: itemPedido.comprimento_cada_mm ? Number(itemPedido.comprimento_cada_mm) : undefined,
+                  });
                 }
               }
+            }
+
+            // Criar UMA ÚNICA ordem de produção para todo o pedido (se houver itens fabricados)
+            if (itensFabricados.length > 0) {
+              // Calcular data programada (se houver prazo de entrega e data do pedido)
+              let dataProgramada: string | null = null;
+              if (pedidoParaInserir.prazo_entrega_dias && pedidoParaInserir.data_pedido) {
+                const dataPedido = new Date(pedidoParaInserir.data_pedido);
+                dataPedido.setDate(dataPedido.getDate() + pedidoParaInserir.prazo_entrega_dias);
+                dataProgramada = dataPedido.toISOString().split('T')[0];
+              }
+
+              // Criar ordem de produção única para o pedido com todos os itens
+              await criarOrdemProducaoPorPedido(
+                pedidoCriado.id,
+                pedidoParaInserir.numero_pedido,
+                dataProgramada,
+                itensFabricados
+              );
             }
           }
         }
@@ -407,8 +475,10 @@ export function usePedidos() {
           .eq('pedido_id', id);
 
         if (!itensComProdutosError && itensComProdutos && numeroPedido) {
+          // Coletar itens fabricados para criar OP
+          const itensFabricados: ItemFabricadoParaOP[] = [];
+
           // Processar cada item do pedido
-          // A verificação de duplicação é feita na função criarOrdemProducaoSegura
           for (const itemPedido of itensComProdutos) {
             const produto = itemPedido.produto as any;
 
@@ -416,8 +486,8 @@ export function usePedidos() {
 
             if (produto.tipo === 'revenda') {
               // Dar baixa imediata no estoque de produtos revenda
-              const quantidade = itemPedido.quantidade_simples 
-                ? Number(itemPedido.quantidade_simples) 
+              const quantidade = itemPedido.quantidade_simples
+                ? Number(itemPedido.quantidade_simples)
                 : 0;
 
               if (quantidade > 0) {
@@ -435,40 +505,122 @@ export function usePedidos() {
                 }
               }
             } else if (produto.tipo === 'fabricado') {
-              // Criar ordem de produção para produtos fabricados
-              // Calcular total de metros: usar total_calculado se existir (venda composta),
-              // senão usar quantidade_simples (venda simples por metro)
+              // Coletar item fabricado para a OP
               const totalMetros = itemPedido.total_calculado
                 ? Number(itemPedido.total_calculado)
                 : (itemPedido.quantidade_simples ? Number(itemPedido.quantidade_simples) : 0);
 
               if (totalMetros > 0) {
-                // Calcular data programada (se houver prazo de entrega e data do pedido)
-                let dataProgramada: string | null = null;
-                const pedidoFinal = data || pedidoAtual;
-                if (pedidoFinal?.prazo_entrega_dias && pedidoFinal?.data_pedido) {
-                  const dataPedido = new Date(pedidoFinal.data_pedido);
-                  dataPedido.setDate(dataPedido.getDate() + pedidoFinal.prazo_entrega_dias);
-                  dataProgramada = dataPedido.toISOString().split('T')[0];
-                } else if (pedidoFinal?.data_entrega_prevista) {
-                  dataProgramada = pedidoFinal.data_entrega_prevista.split('T')[0];
-                }
-
-                // Usar função segura que evita duplicação
-                await criarOrdemProducaoSegura(
-                  id,
-                  itemPedido.id,
-                  produto.id,
-                  produto.nome,
-                  totalMetros,
-                  numeroPedido,
-                  dataProgramada,
-                  produto.instrucoes_tecnicas || null,
-                  itemPedido.quantidade_pecas ? Number(itemPedido.quantidade_pecas) : null,
-                  itemPedido.comprimento_cada_mm ? Number(itemPedido.comprimento_cada_mm) : null
-                );
+                itensFabricados.push({
+                  pedido_item_id: itemPedido.id,
+                  produto_id: produto.id,
+                  quantidade_metros: totalMetros,
+                  quantidade_pecas: itemPedido.quantidade_pecas ? Number(itemPedido.quantidade_pecas) : undefined,
+                  comprimento_cada_mm: itemPedido.comprimento_cada_mm ? Number(itemPedido.comprimento_cada_mm) : undefined,
+                });
               }
             }
+          }
+
+          // Criar UMA ÚNICA ordem de produção para todo o pedido (se houver itens fabricados)
+          if (itensFabricados.length > 0) {
+            // Calcular data programada (se houver prazo de entrega e data do pedido)
+            let dataProgramada: string | null = null;
+            const pedidoFinal = data || pedidoAtual;
+            if (pedidoFinal?.prazo_entrega_dias && pedidoFinal?.data_pedido) {
+              const dataPedido = new Date(pedidoFinal.data_pedido);
+              dataPedido.setDate(dataPedido.getDate() + pedidoFinal.prazo_entrega_dias);
+              dataProgramada = dataPedido.toISOString().split('T')[0];
+            } else if (pedidoFinal?.data_entrega_prevista) {
+              dataProgramada = pedidoFinal.data_entrega_prevista.split('T')[0];
+            }
+
+            // Criar ordem de produção única para o pedido com todos os itens
+            await criarOrdemProducaoPorPedido(
+              id,
+              numeroPedido,
+              dataProgramada,
+              itensFabricados
+            );
+          }
+        }
+
+        // Gerar cobrança no Asaas se marcado no pedido
+        const pedidoComDados = data || pedidoAtual;
+        if (pedidoComDados?.gerar_cobranca_asaas && !pedidoComDados?.asaas_payment_id) {
+          try {
+            // Buscar cliente para obter asaas_customer_id
+            const { data: cliente } = await supabase
+              .from('clientes')
+              .select('asaas_customer_id')
+              .eq('id', pedidoComDados.cliente_id)
+              .single();
+
+            if (!cliente?.asaas_customer_id) {
+              console.warn('Pedido aprovado, mas cliente não possui cadastro no Asaas. Cobrança não gerada.');
+            } else {
+              const isParcelado = (pedidoComDados.numero_parcelas || 1) > 1;
+
+              // Montar objeto de cobrança
+              const cobrancaData: any = {
+                customer: cliente.asaas_customer_id,
+                billingType: pedidoComDados.tipo_cobranca || 'BOLETO',
+                dueDate: pedidoComDados.data_vencimento,
+                description: `Pedido #${numeroPedido} - Aprovado`,
+                externalReference: id,
+              };
+
+              // Valor: se parcelado, usar installmentCount e totalValue
+              if (isParcelado) {
+                cobrancaData.installmentCount = pedidoComDados.numero_parcelas;
+                cobrancaData.totalValue = Number(pedidoComDados.valor_total) || 0;
+              } else {
+                cobrancaData.value = Number(pedidoComDados.valor_total) || 0;
+              }
+
+              // Desconto antecipado
+              if (pedidoComDados.desconto_antecipado_valor && pedidoComDados.desconto_antecipado_dias) {
+                cobrancaData.discount = {
+                  value: pedidoComDados.desconto_antecipado_valor,
+                  dueDateLimitDays: pedidoComDados.desconto_antecipado_dias,
+                  type: pedidoComDados.desconto_antecipado_tipo || 'FIXED',
+                };
+              }
+
+              // Juros
+              if (pedidoComDados.juros_atraso) {
+                cobrancaData.interest = {
+                  value: pedidoComDados.juros_atraso,
+                };
+              }
+
+              // Multa
+              if (pedidoComDados.multa_atraso) {
+                cobrancaData.fine = {
+                  value: pedidoComDados.multa_atraso,
+                  type: pedidoComDados.multa_atraso_tipo || 'PERCENTAGE',
+                };
+              }
+
+              console.log('🏦 Gerando cobrança Asaas (pedido aprovado):', cobrancaData);
+              const cobrancaResult = await asaasClient.createPayment(cobrancaData);
+
+              if (cobrancaResult && (cobrancaResult as any).id) {
+                // Atualizar pedido com ID da cobrança Asaas
+                await supabase
+                  .from('pedidos')
+                  .update({
+                    asaas_payment_id: (cobrancaResult as any).id,
+                    asaas_payment_url: (cobrancaResult as any).invoiceUrl || (cobrancaResult as any).bankSlipUrl,
+                  })
+                  .eq('id', id);
+
+                console.log('✅ Cobrança Asaas gerada com sucesso:', (cobrancaResult as any).id);
+              }
+            }
+          } catch (asaasError: any) {
+            console.error('Erro ao gerar cobrança Asaas:', asaasError);
+            // Não bloquear a aprovação por erro de cobrança
           }
         }
       }

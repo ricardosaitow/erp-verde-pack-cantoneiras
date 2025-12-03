@@ -23,6 +23,7 @@ import UsuariosPage from './pages/UsuariosPage';
 import LinhaProducaoPage from './pages/LinhaProducaoPage';
 import DespachoPage from './pages/DespachoPage';
 import DespachoPublicoPage from './pages/DespachoPublicoPage';
+import ConferenciaPalletPage from './pages/ConferenciaPalletPage';
 import ComprasPage from './pages/ComprasPage';
 import PlaceholderPage from './pages/PlaceholderPage';
 import TesteAsaas from './pages/TesteAsaas';
@@ -30,19 +31,23 @@ import TesteAsaasCompleto from './pages/TesteAsaasCompleto';
 import TesteFluxoCliente from './pages/TesteFluxoCliente';
 import TesteBase from './pages/TesteBase';
 import TesteClienteIntegrado from './pages/TesteClienteIntegrado';
+import ImportarProdutosBasePage from './pages/ImportarProdutosBasePage';
 
-export type Page = 'Dashboard' | 'Clientes' | 'Orçamentos' | 'Pedidos' | 'Despacho' | 'Relatórios de Vendas' | 'Ordens de Produção' | 'Linha de Produção' | 'Relatórios de Produção' | 'Produtos Revenda' | 'Matérias-Primas' | 'Compras' | 'Movimentações' | 'Inventário' | 'Alertas' | 'Produtos' | 'Matéria-Prima' | 'Fornecedores' | 'Transportadoras' | 'Categorias' | 'Contas a Receber' | 'Contas a Pagar' | 'Fluxo de Caixa' | 'Análise de Lucratividade' | 'Relatórios Gerais' | 'Usuários' | 'Permissões' | 'Parâmetros' | 'Teste Asaas' | 'Teste Asaas Completo' | 'Fluxo Cliente ERP+Asaas' | 'Teste Base ERP' | 'Teste Cliente Integrado';
+export type Page = 'Dashboard' | 'Clientes' | 'Orçamentos' | 'Pedidos' | 'Despacho' | 'Relatórios de Vendas' | 'Ordens de Produção' | 'Linha de Produção' | 'Relatórios de Produção' | 'Produtos Revenda' | 'Matérias-Primas' | 'Compras' | 'Movimentações' | 'Inventário' | 'Alertas' | 'Produtos' | 'Matéria-Prima' | 'Fornecedores' | 'Transportadoras' | 'Categorias' | 'Contas a Receber' | 'Contas a Pagar' | 'Fluxo de Caixa' | 'Análise de Lucratividade' | 'Relatórios Gerais' | 'Usuários' | 'Permissões' | 'Parâmetros' | 'Teste Asaas' | 'Teste Asaas Completo' | 'Fluxo Cliente ERP+Asaas' | 'Teste Base ERP' | 'Teste Cliente Integrado' | 'Importar Produtos Base';
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('Dashboard');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isPublicDespacho, setIsPublicDespacho] = useState(false);
+  const [isPublicPalletConferencia, setIsPublicPalletConferencia] = useState(false);
 
-  // Check if it's public despacho page
+  // Check if it's public despacho page or pallet conferencia page
   useEffect(() => {
     const path = window.location.pathname;
     if (path.includes('/despacho/publico')) {
       setIsPublicDespacho(true);
+    } else if (path.includes('/pallet/conferir')) {
+      setIsPublicPalletConferencia(true);
     }
   }, []);
 
@@ -94,6 +99,8 @@ const App: React.FC = () => {
         return <TesteBase />;
       case 'Teste Cliente Integrado':
         return <TesteClienteIntegrado />;
+      case 'Importar Produtos Base':
+        return <ImportarProdutosBasePage />;
       default:
         return <PlaceholderPage title={currentPage} />;
     }
@@ -111,6 +118,16 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-gray-50">
         <Toaster position="top-right" richColors closeButton />
         <DespachoPublicoPage />
+      </div>
+    );
+  }
+
+  // If it's public pallet conferencia page, show it without authentication
+  if (isPublicPalletConferencia) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Toaster position="top-right" richColors closeButton />
+        <ConferenciaPalletPage />
       </div>
     );
   }

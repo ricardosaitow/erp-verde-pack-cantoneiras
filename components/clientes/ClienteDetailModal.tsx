@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Edit, Trash2, CheckCircle, XCircle, Building2, User, MapPin, CreditCard, Mail, Phone, FileText, Calendar, DollarSign, Clock, Link2, CloudOff, Receipt, Repeat, CreditCard as CreditCardIcon, Activity, Loader2, AlertCircle, ExternalLink, ShoppingCart, Package, Truck } from 'lucide-react';
+import { Edit, Trash2, CheckCircle, XCircle, Building2, User, MapPin, CreditCard, Mail, Phone, FileText, Calendar, DollarSign, Clock, Link2, CloudOff, Receipt, Repeat, CreditCard as CreditCardIcon, Activity, Loader2, AlertCircle, ExternalLink, ShoppingCart, Package, Truck, ChevronDown, ChevronUp, Hash } from 'lucide-react';
 import type { Cliente, ClienteContato } from '@/lib/database.types';
 import { formatBrazilianDateTimeLong } from '@/lib/date-utils';
 import { formatCEP, formatTelefone, formatCpfCnpj, formatCurrency } from '@/lib/format';
@@ -38,6 +38,7 @@ export function ClienteDetailModal({
   const [cobrancaModalOpen, setCobrancaModalOpen] = useState(false);
   const [selectedPedidoId, setSelectedPedidoId] = useState<string | null>(null);
   const [pedidoModalOpen, setPedidoModalOpen] = useState(false);
+  const [expandedPedidos, setExpandedPedidos] = useState<Set<number>>(new Set());
 
   // Buscar dados do Asaas (autoFetch desabilitado - controlado manualmente)
   const {
@@ -141,6 +142,18 @@ export function ClienteDetailModal({
   const handleClosePedidoModal = () => {
     setPedidoModalOpen(false);
     setSelectedPedidoId(null);
+  };
+
+  const togglePedidoExpanded = (pedidoId: number) => {
+    setExpandedPedidos(prev => {
+      const next = new Set(prev);
+      if (next.has(pedidoId)) {
+        next.delete(pedidoId);
+      } else {
+        next.add(pedidoId);
+      }
+      return next;
+    });
   };
 
   return (
@@ -831,50 +844,167 @@ export function ClienteDetailModal({
                     <p className="text-sm font-medium">
                       {totalPedidos} {totalPedidos === 1 ? 'pedido encontrado' : 'pedidos encontrados'}
                     </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (expandedPedidos.size > 0) {
+                          setExpandedPedidos(new Set());
+                        } else {
+                          setExpandedPedidos(new Set(pedidos.map((p: any) => p.id)));
+                        }
+                      }}
+                      className="text-xs"
+                    >
+                      {expandedPedidos.size > 0 ? 'Recolher todos' : 'Expandir todos'}
+                    </Button>
                   </div>
-                  <div className="border rounded-lg overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead className="bg-muted/50 border-b">
-                          <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Número</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">ID</th>
-                            <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase">Data</th>
-                            <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase">Valor Total</th>
-                            <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase">NF-e</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {pedidos.map((pedido: any) => (
-                            <tr
-                              key={pedido.id}
-                              className="hover:bg-muted/50 transition-colors cursor-pointer"
-                              onClick={() => handlePedidoClick(String(pedido.id))}
-                            >
-                              <td className="px-4 py-3 text-sm font-medium">#{pedido.number || pedido.id}</td>
-                              <td className="px-4 py-3 text-sm font-mono text-xs text-muted-foreground">{pedido.id}</td>
-                              <td className="px-4 py-3 text-sm text-center">
-                                {pedido.issueDate ? new Date(pedido.issueDate).toLocaleDateString('pt-BR') : '-'}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-right font-medium">
-                                {pedido.orderValue !== undefined ? formatCurrency(pedido.orderValue) : '-'}
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                {pedido.invoiceNumber ? (
-                                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 text-xs">
-                                    NF-e {pedido.invoiceNumber}
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-xs text-muted-foreground">
-                                    Não emitida
-                                  </Badge>
+
+                  {/* Lista de Pedidos Expandíveis */}
+                  <div className="space-y-4">
+                    {pedidos.map((pedido: any) => {
+                      const isExpanded = expandedPedidos.has(pedido.id);
+                      const hasItems = pedido.orderItems && pedido.orderItems.length > 0;
+
+                      return (
+                        <div key={pedido.id} className="border rounded-lg overflow-hidden">
+                          {/* Header do Pedido */}
+                          <div
+                            className={`flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors ${isExpanded ? 'bg-muted/30 border-b' : ''}`}
+                            onClick={() => hasItems && togglePedidoExpanded(pedido.id)}
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center gap-2">
+                                {hasItems && (
+                                  isExpanded ? (
+                                    <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                  )
                                 )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                                <div className="p-2 bg-blue-100 rounded-md">
+                                  <Hash className="h-4 w-4 text-blue-600" />
+                                </div>
+                              </div>
+
+                              <div>
+                                <p className="font-semibold text-sm">Pedido #{pedido.number}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {pedido.issueDate ? new Date(pedido.issueDate).toLocaleDateString('pt-BR') : '-'}
+                                  {hasItems && ` - ${pedido.orderItems.length} ${pedido.orderItems.length === 1 ? 'item' : 'itens'}`}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="font-semibold text-green-600">
+                                  {pedido.orderValue !== undefined ? formatCurrency(pedido.orderValue) : '-'}
+                                </p>
+                                {pedido.costOfShipping > 0 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Frete: {formatCurrency(pedido.costOfShipping)}
+                                  </p>
+                                )}
+                              </div>
+
+                              {pedido.invoiceNumber ? (
+                                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 text-xs">
+                                  NF-e {pedido.invoiceNumber}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-xs text-muted-foreground">
+                                  Pendente
+                                </Badge>
+                              )}
+
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePedidoClick(String(pedido.id));
+                                }}
+                                className="text-xs"
+                              >
+                                <ExternalLink className="h-3 w-3 mr-1" />
+                                Ver detalhes
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Tabela de Itens (Expandida) */}
+                          {isExpanded && hasItems && (
+                            <div className="overflow-x-auto">
+                              <table className="w-full">
+                                <thead className="bg-muted/50 border-b">
+                                  <tr>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Cód. Interno</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Produto</th>
+                                    <th className="px-4 py-2 text-center text-xs font-medium text-muted-foreground uppercase">Quantidade</th>
+                                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground uppercase">Preço Unit.</th>
+                                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground uppercase">Desconto</th>
+                                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground uppercase">Total</th>
+                                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground uppercase">Frete Item</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                  {pedido.orderItems.map((item: any, index: number) => {
+                                    const produto = item.productId && pedido.produtosInfo ? pedido.produtosInfo[item.productId] : null;
+
+                                    return (
+                                      <tr key={index} className="hover:bg-muted/30 transition-colors">
+                                        <td className="px-4 py-2 text-sm font-mono">
+                                          {produto?.code || item.productId || '-'}
+                                        </td>
+                                        <td className="px-4 py-2 text-sm">
+                                          <div>
+                                            <p className="font-medium">{produto?.name || item.description || 'Produto'}</p>
+                                            {produto?.ncm && (
+                                              <p className="text-xs text-muted-foreground">NCM: {produto.ncm}</p>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-center font-medium">
+                                          {item.quantity?.toLocaleString('pt-BR') || '-'}
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-right">
+                                          {item.unitPrice !== undefined ? formatCurrency(item.unitPrice) : '-'}
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-right">
+                                          {item.discountValue > 0 ? (
+                                            <span className="text-red-600">- {formatCurrency(item.discountValue)}</span>
+                                          ) : (
+                                            <span className="text-muted-foreground">0,00%</span>
+                                          )}
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-right font-medium">
+                                          {item.itemValue !== undefined ? formatCurrency(item.itemValue) : '-'}
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-right">
+                                          {item.costOfShipping > 0 ? formatCurrency(item.costOfShipping) : formatCurrency(0)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                                <tfoot className="bg-muted/30 border-t">
+                                  <tr>
+                                    <td colSpan={5} className="px-4 py-2 text-sm font-medium text-right">Total do Pedido:</td>
+                                    <td className="px-4 py-2 text-sm text-right font-semibold text-green-600">
+                                      {pedido.itemsValue !== undefined ? formatCurrency(pedido.itemsValue) : formatCurrency(pedido.orderValue || 0)}
+                                    </td>
+                                    <td className="px-4 py-2 text-sm text-right font-medium">
+                                      {pedido.costOfShipping > 0 ? formatCurrency(pedido.costOfShipping) : formatCurrency(0)}
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}

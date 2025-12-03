@@ -31,8 +31,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import {
   Plus, Trash2, ShoppingCart, Save, X, User, List, DollarSign, Truck, MessageSquare,
-  AlertTriangle, ArrowRight, Check, RotateCcw, CreditCard, Percent, Calendar, Info
+  AlertTriangle, ArrowRight, Check, RotateCcw, CreditCard, Calendar, History,
+  Package, Scale
 } from 'lucide-react';
+import { ClientePedidosModal } from '@/components/clientes/ClientePedidosModal';
 import {
   verificarEstoqueMateriasPrimas,
   verificarEstoqueProdutoRevenda,
@@ -48,7 +50,6 @@ const TIPOS_COBRANCA = [
   { value: 'BOLETO', label: 'Boleto Bancário' },
   { value: 'PIX', label: 'PIX' },
   { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
-  { value: 'UNDEFINED', label: 'Cliente Escolhe' },
 ];
 
 // Opções de parcelamento
@@ -155,6 +156,9 @@ export default function PedidoFormModal({
   const [verificandoCustos, setVerificandoCustos] = useState(false);
   const [mostrarModalCusto, setMostrarModalCusto] = useState(false);
 
+  // Estado para modal de histórico de pedidos do cliente
+  const [showPedidosModal, setShowPedidosModal] = useState(false);
+
   // Estado para bancos
   const [bancos, setBancos] = useState<BaseBankOption[]>([]);
   const [carregandoBancos, setCarregandoBancos] = useState(false);
@@ -167,7 +171,7 @@ export default function PedidoFormModal({
     cliente_id: '',
     tipo: 'orcamento' as 'orcamento' | 'pedido_confirmado',
     status: 'pendente' as 'pendente' | 'aprovado' | 'producao' | 'finalizado' | 'aguardando_despacho' | 'entregue' | 'cancelado' | 'recusado',
-    data_pedido: new Date().toISOString().split('T')[0],
+    data_pedido: new Date().toLocaleDateString('en-CA'), // Formato YYYY-MM-DD no fuso local
     valor_produtos: 0,
     valor_frete: 0,
     valor_desconto: 0,
@@ -183,6 +187,16 @@ export default function PedidoFormModal({
     // Dados de Transporte
     transportadora_id: '',
     tipo_frete: 'CIF',
+    // Dados de Volume/Peso para NF-e
+    quantidade_volumes: 1,
+    especie_volumes: 'PALLET',
+    marca_volumes: '1',
+    numeracao_volumes: '1',
+    peso_bruto_kg: 0,
+    peso_liquido_kg: 0,
+    // Dados Fiscais
+    cfop: '5101', // Padrão SP
+    dados_adicionais_nfe: '',
     // Dados de Cobrança Asaas
     gerar_cobranca_asaas: true,
     numero_parcelas: 1,
@@ -339,6 +353,16 @@ export default function PedidoFormModal({
         data_vencimento: pedido.data_vencimento || '',
         transportadora_id: pedido.transportadora_id || '',
         tipo_frete: pedido.tipo_frete || 'CIF',
+        // Dados de Volume/Peso para NF-e
+        quantidade_volumes: (pedido as any).quantidade_volumes || 1,
+        especie_volumes: (pedido as any).especie_volumes || 'PALLET',
+        marca_volumes: (pedido as any).marca_volumes || '1',
+        numeracao_volumes: (pedido as any).numeracao_volumes || '1',
+        peso_bruto_kg: (pedido as any).peso_bruto_kg || 0,
+        peso_liquido_kg: (pedido as any).peso_liquido_kg || 0,
+        // Dados Fiscais
+        cfop: (pedido as any).cfop || '5101',
+        dados_adicionais_nfe: (pedido as any).dados_adicionais_nfe || '',
         // Dados de Cobrança Asaas
         gerar_cobranca_asaas: (pedido as any).gerar_cobranca_asaas || false,
         numero_parcelas: (pedido as any).numero_parcelas || 1,
@@ -380,7 +404,7 @@ export default function PedidoFormModal({
       cliente_id: '',
       tipo: 'orcamento',
       status: 'pendente',
-      data_pedido: new Date().toISOString().split('T')[0],
+      data_pedido: new Date().toLocaleDateString('en-CA'), // Formato YYYY-MM-DD no fuso local
       valor_produtos: 0,
       valor_frete: 0,
       valor_desconto: 0,
@@ -395,6 +419,16 @@ export default function PedidoFormModal({
       data_vencimento: dataVencimentoPadrao.toISOString().split('T')[0],
       transportadora_id: '',
       tipo_frete: 'CIF',
+      // Dados de Volume/Peso para NF-e
+      quantidade_volumes: 1,
+      especie_volumes: 'PALLET',
+      marca_volumes: '1',
+      numeracao_volumes: '1',
+      peso_bruto_kg: 0,
+      peso_liquido_kg: 0,
+      // Dados Fiscais
+      cfop: '5101',
+      dados_adicionais_nfe: '',
       // Dados de Cobrança Asaas
       gerar_cobranca_asaas: true,
       numero_parcelas: 1,
@@ -417,6 +451,54 @@ export default function PedidoFormModal({
         label: cliente.nome_fantasia || cliente.razao_social || 'Cliente sem nome',
       }));
   }, [clientes]);
+
+  // Atualiza CFOP automaticamente quando o cliente muda
+  useEffect(() => {
+    if (formData.cliente_id) {
+      const cliente = clientes.find(c => c.id === formData.cliente_id);
+      if (cliente) {
+        const novoCFOP = calcularCFOP(cliente.estado);
+        if (novoCFOP !== formData.cfop) {
+          setFormData(prev => ({ ...prev, cfop: novoCFOP }));
+        }
+      }
+    }
+  }, [formData.cliente_id, clientes]);
+
+  // Atualiza dados adicionais da NF-e quando o valor total muda
+  useEffect(() => {
+    if (formData.valor_total > 0) {
+      const dadosAdicionais = calcularDadosAdicionaisNFe(formData.valor_total);
+      if (dadosAdicionais !== formData.dados_adicionais_nfe) {
+        setFormData(prev => ({ ...prev, dados_adicionais_nfe: dadosAdicionais }));
+      }
+    }
+  }, [formData.valor_total]);
+
+  // Atualiza numeração dos volumes quando a quantidade muda
+  useEffect(() => {
+    const novaNumeracao = gerarNumeracaoVolumes(formData.quantidade_volumes);
+    if (novaNumeracao !== formData.numeracao_volumes) {
+      setFormData(prev => ({ ...prev, numeracao_volumes: novaNumeracao }));
+    }
+  }, [formData.quantidade_volumes]);
+
+  // Atualiza peso líquido automaticamente quando os itens mudam
+  useEffect(() => {
+    const novoPesoLiquido = calcularPesoLiquido(itens);
+    if (novoPesoLiquido !== formData.peso_liquido_kg) {
+      setFormData(prev => ({ ...prev, peso_liquido_kg: novoPesoLiquido }));
+    }
+  }, [itens, produtos]);
+
+  // Atualiza peso bruto quando peso líquido ou quantidade de volumes muda
+  useEffect(() => {
+    const pesoPallets = formData.quantidade_volumes * PESO_PALLET_KG;
+    const novoPesoBruto = formData.peso_liquido_kg + pesoPallets;
+    if (novoPesoBruto !== formData.peso_bruto_kg) {
+      setFormData(prev => ({ ...prev, peso_bruto_kg: novoPesoBruto }));
+    }
+  }, [formData.peso_liquido_kg, formData.quantidade_volumes]);
 
   const addItem = () => {
     const novoItem: PedidoItemForm = {
@@ -640,6 +722,91 @@ export default function PedidoFormModal({
     }));
   };
 
+  // Função para determinar o CFOP baseado no estado do cliente
+  // 5101 = Venda dentro do estado (SP)
+  // 6101 = Venda fora do estado
+  const calcularCFOP = (estadoCliente: string | undefined): string => {
+    const estadoEmpresa = 'SP'; // Estado da empresa VerdePack
+    if (!estadoCliente) return '5101'; // Padrão dentro do estado
+    return estadoCliente.toUpperCase() === estadoEmpresa ? '5101' : '6101';
+  };
+
+  // Função para gerar a numeração dos volumes (ex: "1", "1-3" para 3 pallets)
+  const gerarNumeracaoVolumes = (quantidade: number): string => {
+    if (quantidade <= 1) return '1';
+    return `1-${quantidade}`;
+  };
+
+  // Função para calcular os dados adicionais da NF-e
+  // Crédito ICMS = 1,96% sobre o valor total
+  const calcularDadosAdicionaisNFe = (valorTotal: number): string => {
+    const aliquotaICMS = 1.96;
+    const creditoICMS = (valorTotal * aliquotaICMS) / 100;
+
+    return `Permite o aproveitamento do crédito de ICMS no valor de R$ ${creditoICMS.toFixed(2).replace('.', ',')}. Correspondente à alíquota de ${aliquotaICMS.toFixed(2).replace('.', ',')}%, nos termos do artigo 23 da LC 123. - Trib aprox: R$ 0,00 Federal e R$ 0,00 Estadual Fonte: IBPT Ar5Fr7`;
+  };
+
+  // Função para calcular peso líquido dos produtos
+  // Para cantoneiras: o consumo_por_metro_g representa o consumo de matéria-prima por metro de BOBINA
+  // O peso final do produto depende da largura da cantoneira vs largura da bobina
+  // Fórmula: (consumo_por_metro_g × fator_largura × metros) / 1000 = peso em kg
+  // Onde fator_largura = (altura_mm + largura_mm) / largura_bobina (geralmente 1000mm)
+  const calcularPesoLiquido = (itensAtuais: PedidoItemForm[]): number => {
+    let pesoTotalKg = 0;
+    const LARGURA_BOBINA_MM = 1000; // Largura padrão da bobina de papel
+
+    for (const item of itensAtuais) {
+      const produto = produtos.find(p => p.id === item.produto_id);
+      if (!produto) continue;
+
+      // Usar total_calculado se disponível (já está em metros)
+      // Senão calcular baseado em quantidade_pecas/comprimento_cada_mm ou quantidade_simples
+      let totalMetros = 0;
+      if (item.total_calculado && item.total_calculado > 0) {
+        // total_calculado já está em metros
+        totalMetros = item.total_calculado;
+      } else if (item.quantidade_pecas && item.comprimento_cada_mm) {
+        // Medida composta: peças × comprimento em mm → converter para metros
+        totalMetros = (item.quantidade_pecas * item.comprimento_cada_mm) / 1000;
+      } else if (item.quantidade_simples && item.unidade_medida === 'metro') {
+        // Quantidade simples em metros
+        totalMetros = item.quantidade_simples;
+      }
+
+      if (totalMetros > 0 && produto.tipo === 'fabricado' && produto.receitas && produto.receitas.length > 0) {
+        // Somar o consumo_por_metro_g de todas as receitas do produto
+        const consumoTotalPorMetroG = produto.receitas.reduce(
+          (sum, receita) => sum + (receita.consumo_por_metro_g || 0),
+          0
+        );
+
+        // Calcular fator de largura baseado nas dimensões do produto
+        // Para cantoneiras: largura_desenvolvida = altura + largura (as duas abas)
+        // Ex: Cantoneira 40x40 = 80mm de largura desenvolvida
+        const alturaP = produto.altura_mm || 0;
+        const larguraP = produto.largura_mm || 0;
+        const larguraDesenvolvida = alturaP + larguraP; // Largura total da cantoneira "aberta"
+
+        // Fator de conversão: quanto da bobina é usada para fazer o produto
+        // Se não tiver dimensões cadastradas, assume fator 1 (sem conversão)
+        const fatorLargura = larguraDesenvolvida > 0 ? larguraDesenvolvida / LARGURA_BOBINA_MM : 1;
+
+        // Calcular peso em kg: (gramas por metro de bobina × fator × metros) / 1000
+        const pesoItemKg = (consumoTotalPorMetroG * fatorLargura * totalMetros) / 1000;
+        pesoTotalKg += pesoItemKg;
+      } else if (item.quantidade_simples && produto.tipo === 'revenda') {
+        // Para produtos de revenda, usar peso_por_unidade_kg se existir
+        const pesoPorUnidade = (produto as any).peso_por_unidade_kg || 0;
+        pesoTotalKg += item.quantidade_simples * pesoPorUnidade;
+      }
+    }
+
+    return pesoTotalKg;
+  };
+
+  // Constante: peso do pallet em kg
+  const PESO_PALLET_KG = 10;
+
   // Função para obter a quantidade de um item (peças ou simples)
   const getQuantidadeItem = (item: PedidoItemForm): number => {
     if (item.quantidade_pecas && item.quantidade_pecas > 0) {
@@ -813,6 +980,26 @@ export default function PedidoFormModal({
       // Dados de Transporte
       transportadora_id: formData.transportadora_id || null,
       tipo_frete: formData.tipo_frete || null,
+      // Dados de Volume/Peso para NF-e
+      quantidade_volumes: formData.quantidade_volumes || 1,
+      especie_volumes: formData.especie_volumes || 'PALLET',
+      marca_volumes: formData.marca_volumes || '1',
+      numeracao_volumes: formData.numeracao_volumes || '1',
+      peso_bruto_kg: formData.peso_bruto_kg || 0,
+      peso_liquido_kg: formData.peso_liquido_kg || 0,
+      // Dados Fiscais
+      cfop: formData.cfop || '5101',
+      dados_adicionais_nfe: formData.dados_adicionais_nfe || null,
+      // Flag para gerar cobrança Asaas quando o pedido for aprovado
+      gerar_cobranca_asaas: formData.gerar_cobranca_asaas || false,
+      // Dados adicionais da cobrança
+      numero_parcelas: formData.numero_parcelas || 1,
+      desconto_antecipado_valor: formData.desconto_antecipado_valor || null,
+      desconto_antecipado_dias: formData.desconto_antecipado_dias || null,
+      desconto_antecipado_tipo: formData.desconto_antecipado_tipo || null,
+      juros_atraso: formData.juros_atraso || null,
+      multa_atraso: formData.multa_atraso || null,
+      multa_atraso_tipo: formData.multa_atraso_tipo || null,
       itens: itens.map(item => ({
         produto_id: item.produto_id,
         tipo_produto: item.tipo_produto,
@@ -824,6 +1011,11 @@ export default function PedidoFormModal({
         preco_unitario: item.preco_unitario,
         subtotal: item.subtotal,
         observacoes: item.observacoes || null,
+        // Campos de frete (distribuição manual CIF)
+        frete_unitario: item.frete_unitario || null,
+        frete_total_item: item.frete_total_item || null,
+        preco_unitario_com_frete: item.preco_unitario_com_frete || null,
+        subtotal_com_frete: item.subtotal_com_frete || null,
       })),
     };
 
@@ -836,80 +1028,8 @@ export default function PedidoFormModal({
       return;
     }
 
-    // Gerar cobrança no Asaas se marcado
-    if (formData.gerar_cobranca_asaas && !pedido && result.data) {
-      try {
-        // Buscar cliente para obter asaas_customer_id
-        const cliente = clientes.find(c => c.id === formData.cliente_id);
-        if (!cliente?.asaas_customer_id) {
-          toast.warning('Pedido criado, mas cliente não possui cadastro no Asaas. Cobrança não gerada.');
-        } else {
-          const tipoAsaas = formData.tipo_cobranca as AsaasBillingType;
-          const isParcelado = formData.numero_parcelas > 1;
-
-          // Montar objeto de cobrança
-          const cobrancaData: any = {
-            customer: cliente.asaas_customer_id,
-            billingType: tipoAsaas,
-            dueDate: formData.data_vencimento,
-            description: `Pedido #${result.data.numero_pedido || 'Novo'} - ${itens.length} item(ns)`,
-            externalReference: result.data.id || '',
-          };
-
-          // Valor: se parcelado, usar installmentCount e totalValue
-          if (isParcelado) {
-            cobrancaData.installmentCount = formData.numero_parcelas;
-            cobrancaData.totalValue = formData.valor_total;
-          } else {
-            cobrancaData.value = formData.valor_total;
-          }
-
-          // Desconto antecipado
-          if (formData.desconto_antecipado_valor > 0 && formData.desconto_antecipado_dias > 0) {
-            cobrancaData.discount = {
-              value: formData.desconto_antecipado_valor,
-              dueDateLimitDays: formData.desconto_antecipado_dias,
-              type: formData.desconto_antecipado_tipo,
-            };
-          }
-
-          // Juros
-          if (formData.juros_atraso > 0) {
-            cobrancaData.interest = {
-              value: formData.juros_atraso,
-            };
-          }
-
-          // Multa
-          if (formData.multa_atraso > 0) {
-            cobrancaData.fine = {
-              value: formData.multa_atraso,
-              type: formData.multa_atraso_tipo,
-            };
-          }
-
-          console.log('Gerando cobrança Asaas:', cobrancaData);
-          const cobrancaResult = await asaasClient.createPayment(cobrancaData);
-
-          if (cobrancaResult && (cobrancaResult as any).id) {
-            // Atualizar pedido com ID da cobrança Asaas
-            await supabase
-              .from('pedidos')
-              .update({
-                asaas_cobranca_id: (cobrancaResult as any).id,
-                asaas_invoice_url: (cobrancaResult as any).invoiceUrl,
-                asaas_bank_slip_url: (cobrancaResult as any).bankSlipUrl,
-              })
-              .eq('id', result.data.id);
-
-            toast.success('Cobrança gerada no Asaas com sucesso!');
-          }
-        }
-      } catch (asaasError: any) {
-        console.error('Erro ao gerar cobrança Asaas:', asaasError);
-        toast.error('Pedido criado, mas erro ao gerar cobrança no Asaas: ' + (asaasError.message || 'Erro desconhecido'));
-      }
-    }
+    // NOTA: A cobrança no Asaas será gerada apenas quando o pedido for APROVADO
+    // A flag gerar_cobranca_asaas foi salva no pedido e será processada em usePedidos.ts
 
     toast.success(`Pedido ${pedido ? 'atualizado' : 'criado'} com sucesso!`);
     onSuccess();
@@ -947,14 +1067,30 @@ export default function PedidoFormModal({
                   <Label htmlFor="cliente_id" className="text-sm font-medium">
                     Cliente <span className="text-destructive">*</span>
                   </Label>
-                  <SearchableSelect
-                    options={clientesOptions}
-                    value={formData.cliente_id}
-                    onValueChange={(value) => setFormData({ ...formData, cliente_id: value })}
-                    placeholder="Selecione um cliente"
-                    searchPlaceholder="Buscar cliente..."
-                    emptyText="Nenhum cliente encontrado"
-                  />
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <SearchableSelect
+                        options={clientesOptions}
+                        value={formData.cliente_id}
+                        onValueChange={(value) => setFormData({ ...formData, cliente_id: value })}
+                        placeholder="Selecione um cliente"
+                        searchPlaceholder="Buscar cliente..."
+                        emptyText="Nenhum cliente encontrado"
+                      />
+                    </div>
+                    {formData.cliente_id && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-10 w-10 flex-shrink-0"
+                        onClick={() => setShowPedidosModal(true)}
+                        title="Ver pedidos anteriores do cliente"
+                      >
+                        <History className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="data_pedido" className="text-sm font-medium">
@@ -1387,6 +1523,44 @@ export default function PedidoFormModal({
                   </Select>
                 </div>
               </div>
+
+              {/* Segunda linha: Volumes e Peso para NF-e */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="quantidade_volumes" className="text-sm font-medium">
+                    <Package className="h-3 w-3 inline mr-1" />
+                    Pallets
+                  </Label>
+                  <NumberInput
+                    id="quantidade_volumes"
+                    value={formData.quantidade_volumes}
+                    onChange={(value) => setFormData({ ...formData, quantidade_volumes: value })}
+                    className="h-10"
+                    min={0}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">
+                    <Scale className="h-3 w-3 inline mr-1" />
+                    Peso Líquido (kg)
+                  </Label>
+                  <Input
+                    value={formData.peso_liquido_kg.toFixed(2)}
+                    readOnly
+                    className="h-10 bg-muted font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">
+                    Peso Bruto (kg)
+                  </Label>
+                  <Input
+                    value={formData.peso_bruto_kg.toFixed(2)}
+                    readOnly
+                    className="h-10 bg-muted font-mono"
+                  />
+                </div>
+              </div>
             </div>
 
             <Separator />
@@ -1506,118 +1680,6 @@ export default function PedidoFormModal({
                 </div>
               )}
 
-              {/* Linha 2: Configurações avançadas de cobrança */}
-              <div className="border rounded-md p-4 space-y-4 bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Info className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Configurações Avançadas de Cobrança</span>
-                  </div>
-                </div>
-
-                {/* Desconto para pagamento antecipado */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium text-muted-foreground">
-                      Desconto Antecipado
-                    </Label>
-                    <div className="flex gap-2">
-                      <CurrencyInput
-                        value={formData.desconto_antecipado_valor}
-                        onChange={(valor) => setFormData({ ...formData, desconto_antecipado_valor: valor })}
-                        className="h-10 flex-1"
-                        placeholder="Valor"
-                      />
-                      <Select
-                        value={formData.desconto_antecipado_tipo}
-                        onValueChange={(value) => setFormData({ ...formData, desconto_antecipado_tipo: value as 'FIXED' | 'PERCENTAGE' })}
-                      >
-                        <SelectTrigger className="h-10 w-20">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="FIXED">R$</SelectItem>
-                          <SelectItem value="PERCENTAGE">%</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium text-muted-foreground">
-                      Dias antes do vencimento
-                    </Label>
-                    <NumberInput
-                      value={formData.desconto_antecipado_dias}
-                      onChange={(valor) => setFormData({ ...formData, desconto_antecipado_dias: valor })}
-                      className="h-10"
-                      placeholder="Ex: 5"
-                      min={0}
-                      max={30}
-                    />
-                  </div>
-
-                  <div className="flex items-end pb-2">
-                    {formData.desconto_antecipado_valor > 0 && formData.desconto_antecipado_dias > 0 && (
-                      <p className="text-xs text-green-600">
-                        {formData.desconto_antecipado_tipo === 'PERCENTAGE'
-                          ? `${formData.desconto_antecipado_valor}% de desconto`
-                          : `${formatCurrency(formData.desconto_antecipado_valor)} de desconto`
-                        } se pago até {formData.desconto_antecipado_dias} dias antes
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Juros e Multa por atraso */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium text-muted-foreground">
-                      <Percent className="h-3 w-3 inline mr-1" />
-                      Juros por Atraso (% ao mês)
-                    </Label>
-                    <NumberInput
-                      value={formData.juros_atraso}
-                      onChange={(valor) => setFormData({ ...formData, juros_atraso: valor })}
-                      className="h-10"
-                      placeholder="Ex: 1"
-                      min={0}
-                      max={10}
-                      step={0.1}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium text-muted-foreground">
-                      Multa por Atraso
-                    </Label>
-                    <div className="flex gap-2">
-                      <NumberInput
-                        value={formData.multa_atraso}
-                        onChange={(valor) => setFormData({ ...formData, multa_atraso: valor })}
-                        className="h-10 flex-1"
-                        placeholder="Ex: 2"
-                        min={0}
-                        max={formData.multa_atraso_tipo === 'PERCENTAGE' ? 10 : 1000}
-                        step={0.1}
-                      />
-                      <Select
-                        value={formData.multa_atraso_tipo}
-                        onValueChange={(value) => setFormData({ ...formData, multa_atraso_tipo: value as 'FIXED' | 'PERCENTAGE' })}
-                      >
-                        <SelectTrigger className="h-10 w-20">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="PERCENTAGE">%</SelectItem>
-                          <SelectItem value="FIXED">R$</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               {/* Checkbox para gerar cobrança */}
               <div className="flex items-center space-x-3 p-4 border rounded-md bg-blue-50/50 border-blue-200">
                 <Switch
@@ -1633,7 +1695,9 @@ export default function PedidoFormModal({
                     {formData.tipo_cobranca === 'BOLETO' && 'Será gerado um boleto bancário para o cliente'}
                     {formData.tipo_cobranca === 'PIX' && 'Será gerado um QR Code PIX para pagamento'}
                     {formData.tipo_cobranca === 'CREDIT_CARD' && 'Será enviado link para pagamento com cartão'}
-                    {formData.tipo_cobranca === 'UNDEFINED' && 'Cliente poderá escolher a forma de pagamento'}
+                  </p>
+                  <p className="text-xs text-amber-600 font-medium mt-1">
+                    ⚠️ A cobrança só será gerada após o pedido ser aprovado
                   </p>
                 </div>
               </div>
@@ -1682,6 +1746,13 @@ export default function PedidoFormModal({
           </DialogFooter>
         </form>
       </DialogContent>
+
+      {/* Modal de Histórico de Pedidos do Cliente */}
+      <ClientePedidosModal
+        cliente={clientes.find(c => c.id === formData.cliente_id) || null}
+        open={showPedidosModal}
+        onClose={() => setShowPedidosModal(false)}
+      />
     </Dialog>
   );
 }

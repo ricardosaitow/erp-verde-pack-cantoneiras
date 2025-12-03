@@ -5,7 +5,7 @@
  * garantindo que não haja retrocessos ou transições inválidas.
  */
 
-export type OrdemProducaoStatus = 'aguardando' | 'em_producao' | 'concluido' | 'cancelado';
+export type OrdemProducaoStatus = 'aguardando' | 'em_producao' | 'parcial' | 'concluido' | 'cancelado';
 
 export interface StatusTransition {
   from: OrdemProducaoStatus;
@@ -16,10 +16,15 @@ export interface StatusTransition {
 
 /**
  * Matriz de transições permitidas para ordens de produção
+ *
+ * Status 'parcial' representa uma OP com múltiplos itens onde:
+ * - Alguns itens já foram finalizados
+ * - Alguns itens ainda estão aguardando ou em produção
  */
 const ORDEM_PRODUCAO_TRANSITIONS: Record<OrdemProducaoStatus, OrdemProducaoStatus[]> = {
   'aguardando': ['em_producao', 'cancelado'],
-  'em_producao': ['concluido'], // Não pode cancelar depois de iniciar produção
+  'em_producao': ['parcial', 'concluido'], // Pode ir para parcial se tiver múltiplos itens
+  'parcial': ['em_producao', 'concluido'], // Pode voltar para em_producao ao iniciar novo item
   'concluido': [], // Estado final
   'cancelado': [], // Estado final
 };
@@ -103,6 +108,7 @@ function getStatusLabel(status: OrdemProducaoStatus): string {
   const labels: Record<OrdemProducaoStatus, string> = {
     'aguardando': 'Aguardando',
     'em_producao': 'Em Produção',
+    'parcial': 'Parcial',
     'concluido': 'Concluído',
     'cancelado': 'Cancelado',
   };
@@ -132,8 +138,8 @@ export function getNextStatus(currentStatus: OrdemProducaoStatus): OrdemProducao
  * Valida se a ordem pode ser editada baseado no status atual
  */
 export function canEditOrdem(status: OrdemProducaoStatus): boolean {
-  // Ordens podem ser editadas apenas se aguardando
-  return status === 'aguardando';
+  // Ordens podem ser editadas se aguardando ou parcial
+  return status === 'aguardando' || status === 'parcial';
 }
 
 /**

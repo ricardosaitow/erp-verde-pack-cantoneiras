@@ -101,6 +101,10 @@ export interface Produto {
   largura_mm?: number;
   espessura_mm?: number;
 
+  // Peso
+  peso_por_unidade_kg?: number; // Peso por unidade de venda (kg por metro, kg por peça, etc.)
+  peso_por_metro_kg?: number; // Peso por metro linear (para produtos fabricados)
+
   // Venda
   unidade_venda: string;
   permite_medida_composta: boolean;
@@ -221,6 +225,18 @@ export interface Pedido {
   base_transportadora_id?: number; // ID da transportadora no Base ERP
   tipo_frete?: string; // CIF, FOB, etc.
 
+  // Dados de Volume/Peso para NF-e
+  quantidade_volumes?: number; // Quantidade de pallets/volumes
+  especie_volumes?: string; // Espécie (PALLET, CAIXA, etc.)
+  marca_volumes?: string; // Marca dos volumes
+  numeracao_volumes?: string; // Numeração (ex: "1/2", "1-3")
+  peso_bruto_kg?: number; // Peso bruto total (produtos + embalagem/pallet)
+  peso_liquido_kg?: number; // Peso líquido (apenas produtos)
+
+  // Dados Fiscais para NF-e
+  cfop?: string; // CFOP (5101 para SP, 6101 fora de SP)
+  dados_adicionais_nfe?: string; // Texto para dados adicionais da NF-e
+
   vendedor_id?: string;
 
   // Integração Base ERP
@@ -235,6 +251,20 @@ export interface Pedido {
   // Integração Asaas
   sincronizado_asaas?: boolean;
   ultima_sincronizacao_asaas?: string;
+  asaas_payment_id?: string;
+  asaas_payment_url?: string;
+  status_pagamento?: string;
+  data_pagamento?: string;
+
+  // Configurações de cobrança Asaas (processadas na aprovação)
+  gerar_cobranca_asaas?: boolean;
+  numero_parcelas?: number;
+  desconto_antecipado_valor?: number;
+  desconto_antecipado_dias?: number;
+  desconto_antecipado_tipo?: string;
+  juros_atraso?: number;
+  multa_atraso?: number;
+  multa_atraso_tipo?: string;
 
   created_at: string;
   updated_at: string;
@@ -245,20 +275,29 @@ export interface PedidoItem {
   pedido_id: string;
   produto_id: string;
   tipo_produto: 'fabricado' | 'revenda';
-  
+
   // Para venda composta
   quantidade_pecas?: number;
   comprimento_cada_mm?: number;
   total_calculado?: number;
-  
+
   // Para venda simples
   quantidade_simples?: number;
-  
+
   unidade_medida: string;
   preco_unitario: number;
   subtotal: number;
   observacoes?: string;
-  
+
+  // Campos de frete (distribuição manual CIF)
+  frete_unitario?: number;
+  frete_total_item?: number;
+  preco_unitario_com_frete?: number;
+  subtotal_com_frete?: number;
+
+  // Peso do item (calculado automaticamente)
+  peso_kg?: number;
+
   created_at: string;
   updated_at: string;
 }
@@ -267,24 +306,48 @@ export interface OrdemProducao {
   id: string;
   numero_op: string;
   pedido_id: string;
-  pedido_item_id: string;
-  produto_id: string;
+  pedido_item_id?: string; // Agora opcional - referência ao primeiro item (retrocompatibilidade)
+  produto_id?: string; // Agora opcional - referência ao primeiro produto (retrocompatibilidade)
 
   quantidade_produzir_metros: number;
   quantidade_pecas?: number;
   comprimento_cada_mm?: number;
   quantidade_simples?: number;
-  
+
   data_programada?: string;
   data_inicio_producao?: string;
   data_conclusao?: string;
-  
-  status: 'aguardando' | 'em_producao' | 'concluido' | 'cancelado';
-  
+
+  // Status atualizado para suportar produção parcial
+  status: 'aguardando' | 'em_producao' | 'parcial' | 'concluido' | 'cancelado';
+
   instrucoes_tecnicas?: string;
   observacoes?: string;
   responsavel_producao?: string;
-  
+
+  created_at: string;
+  updated_at: string;
+}
+
+// Item individual de uma Ordem de Produção
+// Permite rastrear múltiplos produtos/itens dentro de uma única OP
+export interface OrdemProducaoItem {
+  id: string;
+  ordem_producao_id: string;
+  pedido_item_id?: string;
+  produto_id: string;
+
+  quantidade_metros: number;
+  quantidade_pecas?: number;
+  comprimento_cada_mm?: number;
+
+  // Status do item específico
+  status: 'aguardando' | 'em_producao' | 'finalizado' | 'cancelado';
+
+  data_inicio?: string;
+  data_fim?: string;
+  observacoes?: string;
+
   created_at: string;
   updated_at: string;
 }
@@ -305,9 +368,16 @@ export interface PedidoCompleto extends Pedido {
   itens?: (PedidoItem & { produto?: Produto })[];
 }
 
+// Item da OP com produto relacionado
+export interface OrdemProducaoItemCompleta extends OrdemProducaoItem {
+  produto?: ProdutoComCusto;
+  pedido_item?: PedidoItem;
+}
+
 export interface OrdemProducaoCompleta extends OrdemProducao {
   pedido?: Pedido;
-  produto?: ProdutoComCusto;
+  produto?: ProdutoComCusto; // Retrocompatibilidade - primeiro produto
+  itens?: OrdemProducaoItemCompleta[]; // Novo: todos os itens da OP
 }
 
 export interface AlertaEstoque {
@@ -418,4 +488,25 @@ export interface AlertaMudancaLote {
   custo_administrativo_atual: number;
   diferenca_percentual: number;
   estoque_restante_lote_novo: number;
+}
+
+// ============================================
+// PALLETS/VOLUMES DO PEDIDO
+// ============================================
+
+export interface PedidoPallet {
+  id: string;
+  pedido_id: string;
+  numero_pallet: number;
+  qr_code_hash: string;
+  status: 'pendente' | 'conferido';
+  data_conferencia?: string;
+  conferido_por?: string;
+  observacoes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PedidoPalletCompleto extends PedidoPallet {
+  pedido?: PedidoCompleto;
 }
