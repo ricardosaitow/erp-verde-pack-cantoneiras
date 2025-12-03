@@ -927,6 +927,13 @@ export default function PedidoFormModal({
       return;
     }
 
+    // Validar se todos os itens têm produto selecionado
+    const itensSemProduto = itens.filter(item => !item.produto_id);
+    if (itensSemProduto.length > 0) {
+      toast.error('Todos os itens devem ter um produto selecionado');
+      return;
+    }
+
     const problemasEstoque: string[] = [];
 
     for (const item of itens) {

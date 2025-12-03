@@ -276,7 +276,14 @@ export function usePedidos() {
       
       // Se tiver itens, criar eles
       if (itens && itens.length > 0 && pedidoCriado) {
-        const itensParaInserir = itens.map((item: any) => ({
+        // Filtrar itens sem produto_id (proteção extra)
+        const itensValidos = itens.filter((item: any) => item.produto_id && item.produto_id.trim() !== '');
+
+        if (itensValidos.length === 0) {
+          throw new Error('Nenhum item válido com produto selecionado');
+        }
+
+        const itensParaInserir = itensValidos.map((item: any) => ({
           pedido_id: pedidoCriado.id,
           produto_id: item.produto_id,
           tipo_produto: item.tipo_produto,
