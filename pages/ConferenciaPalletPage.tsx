@@ -9,19 +9,42 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Package, CheckCircle2, AlertTriangle, QrCode, XCircle, Truck } from 'lucide-react';
+import { Package, CheckCircle2, AlertTriangle, QrCode, XCircle, Truck, User, MapPin, Phone, Mail, Calendar, Scale, Box } from 'lucide-react';
+
+interface PedidoItem {
+  id: string;
+  produto?: {
+    nome: string;
+  };
+  quantidade_pecas?: number;
+  comprimento_cada_mm?: number;
+  quantidade_simples?: number;
+  unidade_medida?: string;
+}
 
 interface PalletComPedido extends PedidoPallet {
   pedido?: {
     id: string;
     numero_pedido: string;
     status: string;
+    data_pedido: string;
+    tipo_frete?: string;
+    peso_bruto_kg?: number;
+    peso_liquido_kg?: number;
+    quantidade_volumes?: number;
+    observacoes?: string;
     cliente?: {
       nome_fantasia?: string;
       razao_social?: string;
+      cnpj_cpf?: string;
       cidade?: string;
       estado?: string;
+      endereco_completo?: string;
+      cep?: string;
+      telefone?: string;
+      email?: string;
     };
+    itens?: PedidoItem[];
   };
 }
 
@@ -52,7 +75,7 @@ export default function ConferenciaPalletPage() {
     }
 
     try {
-      // Fetch pallet with related pedido and cliente data
+      // Fetch pallet with related pedido, cliente and items data
       const { data, error } = await supabase
         .from('pedido_pallets')
         .select(`
@@ -61,11 +84,30 @@ export default function ConferenciaPalletPage() {
             id,
             numero_pedido,
             status,
+            data_pedido,
+            tipo_frete,
+            peso_bruto_kg,
+            peso_liquido_kg,
+            quantidade_volumes,
+            observacoes,
             cliente:clientes(
               nome_fantasia,
               razao_social,
+              cnpj_cpf,
               cidade,
-              estado
+              estado,
+              endereco_completo,
+              cep,
+              telefone,
+              email
+            ),
+            itens:pedidos_itens(
+              id,
+              quantidade_pecas,
+              comprimento_cada_mm,
+              quantidade_simples,
+              unidade_medida,
+              produto:produtos(nome)
             )
           )
         `)
@@ -280,13 +322,15 @@ export default function ConferenciaPalletPage() {
     );
   }
 
-  const clienteNome = pallet.pedido?.cliente?.nome_fantasia || pallet.pedido?.cliente?.razao_social || 'Cliente não identificado';
-  const clienteCidade = pallet.pedido?.cliente?.cidade || '';
-  const clienteEstado = pallet.pedido?.cliente?.estado || '';
+  const cliente = pallet.pedido?.cliente;
+  const clienteNome = cliente?.nome_fantasia || cliente?.razao_social || 'Cliente não identificado';
+  const clienteCidade = cliente?.cidade || '';
+  const clienteEstado = cliente?.estado || '';
+  const pedido = pallet.pedido;
 
   return (
     <div className="min-h-screen bg-gray-50 py-6 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-lg mx-auto space-y-6">
+      <div className="max-w-2xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center">
           <div className="flex justify-center mb-4">
@@ -303,30 +347,89 @@ export default function ConferenciaPalletPage() {
             <CardTitle className="flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-2">
                 <Package className="h-5 w-5" />
-                Pallet {pallet.numero_pallet}
+                Pallet {pallet.numero_pallet} de {statusPallets?.total || 1}
               </div>
               <Badge variant="outline" className="text-base px-4 py-1 bg-amber-100 text-amber-800 border-amber-300">
                 Pendente
               </Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-6 space-y-6">
+          <CardContent className="p-6 space-y-5">
             {/* Info do Pedido */}
             <div>
-              <h3 className="text-sm font-semibold text-gray-900 mb-3">Dados do Pedido</h3>
+              <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Box className="h-4 w-4" />
+                Dados do Pedido
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Pedido Nº</p>
+                  <p className="text-lg font-bold text-green-700">{pedido?.numero_pedido}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Calendar className="h-3 w-3" /> Data
+                  </p>
+                  <p className="text-sm font-medium">
+                    {pedido?.data_pedido ? new Date(pedido.data_pedido).toLocaleDateString('pt-BR') : '-'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Info do Cliente */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Dados do Cliente
+              </h3>
               <div className="space-y-2">
                 <div>
-                  <p className="text-sm text-muted-foreground">Pedido Nº</p>
-                  <p className="text-lg font-bold text-green-700">{pallet.pedido?.numero_pedido}</p>
+                  <p className="text-base font-semibold">{clienteNome}</p>
+                  {cliente?.razao_social && cliente?.nome_fantasia && (
+                    <p className="text-xs text-muted-foreground">{cliente.razao_social}</p>
+                  )}
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Cliente</p>
-                  <p className="text-base font-medium">{clienteNome}</p>
-                </div>
-                {clienteCidade && clienteEstado && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Destino</p>
-                    <p className="text-base font-medium">{clienteCidade}/{clienteEstado}</p>
+
+                {cliente?.cnpj_cpf && (
+                  <p className="text-sm text-gray-600">
+                    <span className="font-medium">CNPJ/CPF:</span> {cliente.cnpj_cpf}
+                  </p>
+                )}
+
+                {cliente?.endereco_completo && (
+                  <div className="flex items-start gap-2 text-sm text-gray-600">
+                    <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p>{cliente.endereco_completo}</p>
+                      <p>
+                        {clienteCidade && clienteEstado && `${clienteCidade}/${clienteEstado}`}
+                        {cliente?.cep && ` - CEP: ${cliente.cep}`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {!cliente?.endereco_completo && clienteCidade && clienteEstado && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <MapPin className="h-4 w-4" />
+                    <span>{clienteCidade}/{clienteEstado}</span>
+                  </div>
+                )}
+
+                {cliente?.telefone && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Phone className="h-4 w-4" />
+                    <span>{cliente.telefone}</span>
+                  </div>
+                )}
+
+                {cliente?.email && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Mail className="h-4 w-4" />
+                    <span>{cliente.email}</span>
                   </div>
                 )}
               </div>
@@ -334,13 +437,102 @@ export default function ConferenciaPalletPage() {
 
             <Separator />
 
+            {/* Itens do Pedido */}
+            {pedido?.itens && pedido.itens.length > 0 && (
+              <>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Package className="h-4 w-4" />
+                    Itens do Pedido ({pedido.itens.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {pedido.itens.map((item, index) => (
+                      <div key={item.id || index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        <p className="font-medium text-sm">{item.produto?.nome || 'Produto'}</p>
+                        <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-600">
+                          {item.quantidade_pecas && item.comprimento_cada_mm ? (
+                            <>
+                              <span><strong>Qtd:</strong> {item.quantidade_pecas.toLocaleString('pt-BR')} pçs</span>
+                              <span><strong>Comp:</strong> {item.comprimento_cada_mm.toLocaleString('pt-BR')} mm</span>
+                            </>
+                          ) : item.quantidade_simples ? (
+                            <span><strong>Qtd:</strong> {item.quantidade_simples.toLocaleString('pt-BR')} {item.unidade_medida || 'un'}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <Separator />
+              </>
+            )}
+
+            {/* Info de Transporte */}
+            {(pedido?.peso_bruto_kg || pedido?.peso_liquido_kg || pedido?.tipo_frete) && (
+              <>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Truck className="h-4 w-4" />
+                    Informações de Transporte
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    {pedido?.tipo_frete && (
+                      <div>
+                        <p className="text-xs text-muted-foreground">Tipo de Frete</p>
+                        <p className="font-medium">{pedido.tipo_frete}</p>
+                      </div>
+                    )}
+                    {pedido?.quantidade_volumes && (
+                      <div>
+                        <p className="text-xs text-muted-foreground">Total de Volumes</p>
+                        <p className="font-medium">{pedido.quantidade_volumes}</p>
+                      </div>
+                    )}
+                    {pedido?.peso_liquido_kg !== undefined && pedido?.peso_liquido_kg > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Scale className="h-3 w-3" /> Peso Líquido
+                        </p>
+                        <p className="font-medium">{pedido.peso_liquido_kg.toFixed(2)} kg</p>
+                      </div>
+                    )}
+                    {pedido?.peso_bruto_kg !== undefined && pedido?.peso_bruto_kg > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Scale className="h-3 w-3" /> Peso Bruto
+                        </p>
+                        <p className="font-medium">{pedido.peso_bruto_kg.toFixed(2)} kg</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <Separator />
+              </>
+            )}
+
+            {/* Observações */}
+            {pedido?.observacoes && (
+              <>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">Observações</h3>
+                  <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    {pedido.observacoes}
+                  </p>
+                </div>
+
+                <Separator />
+              </>
+            )}
+
             {/* Status dos Pallets */}
             {statusPallets && (
-              <div className="bg-gray-50 rounded-lg p-4">
+              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
                 <h3 className="text-sm font-semibold text-gray-900 mb-2">Status da Conferência</h3>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Pallets conferidos:</span>
-                  <span className="font-bold text-lg">
+                  <span className="font-bold text-lg text-green-700">
                     {statusPallets.conferidos} / {statusPallets.total}
                   </span>
                 </div>
@@ -357,8 +549,6 @@ export default function ConferenciaPalletPage() {
                 )}
               </div>
             )}
-
-            <Separator />
 
             {/* Botão de Conferência */}
             <div className="pt-2">
